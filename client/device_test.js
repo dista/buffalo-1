@@ -1,13 +1,12 @@
 var net = require("net");
 var util = require("../util.js");
-var port = 6000;
+var port = 8000;
 var posix = require('posix');
 var ip = "127.0.0.1"
 
 var device_test = function(device_id){
     var device_client = net.connect(port, ip, function(){
-        //send_heartbeat();
-        send_login(device_id, new Buffer([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]));
+        send_login(device_id);
         /*
         setInterval(function(){
             send_heartbeat();
@@ -18,38 +17,22 @@ var device_test = function(device_id){
 
         device_client.on('data', function(data){
             console.log(data);
-            var type = data[1];
+            if(data[0] == 0xa0){
+                send_heartbeat();
+            }
+            else if(data[0] == 0xa1){
+                send_sync_time();
+            }
+            else if(data[0] == 0xa7){
+                send_status(device_id);
+            }
+            var type = data[0];
             var msg = {};
             msg["type"] = type;
-            msg["packet_id"] = data.readUInt32BE(2);
+            msg["packet_id"] = data.readUInt32BE(1);
 
-            if(type == 0x41){
-                send_control_response(msg, 1);
-            }
-            else if(type == 0x42){
-                send_status_response(msg,
-                                     0,
-                                     1,
-                                     20,
-                                     30,
-                                     123,
-                                     1
-                    );
-            }
-            else if(type == 0x43)
-            {
-                send_control_response(msg, 0);
-            }
-            else if(type == 0x44)
-            {
-                send_control_response(msg, 0);
-            }
-            else if(type == 0x45)
-            {
-                send_control_response(msg, 0);
-            }
-            else if(type == 0x46){
-                send_control_response(msg, 0);
+            if(type == 0xa5 || type == 0xa6){
+                send_control_response(msg, data);
             }
         });
     });
@@ -66,91 +49,45 @@ var device_test = function(device_id){
     device_client.on('end', function(){
     });
         
-    var send_status_response = function(msg,
-                                        code,
-                                        state,
-                                        temperature,
-                                        humidity,
-                                        battery,
-                                        locked)
-    {
-        if(code == 0)
-        {
-            var buff = new Buffer(10 + 2 + 6);
-            util.setCommonPart(buff, msg);
-            buff[8] = 0x01;
-            buff[10] = state;
-            buff[11] = temperature;
-            buff[12] = humidity;
-            buff.writeUInt16BE(battery, 13);
-            buff[15] = locked;
-            util.setChecksum(buff);
-            device_client.write(buff);
-        }
-        else{
-            device_client.write(util.buildErr(msg, code));
-        }
-    }
-
     var send_control_response = function(msg, code){
-        console.log("send control response");
-        if(code != 0){
-            device_client.write(util.buildErr(msg, code));
-        }
-        else
-        {
-            var ret = util.buildGeneralOk(msg);
-            console.log(ret);
-            device_client.write(util.buildGeneralOk(msg));
-        }
     }
 
     var send_heartbeat = function(){
-        var buff = new Buffer(10 + 16);
-        util.setCommonPart(buff, {"type": 0x30, "packet_id": 1});
-        util.setChecksum(buff);
+        var buff = new Buffer(util.REQ_HEADER_SIZE);
+        util.setReqCommonPart(buff, {"type": 0xa1, "packet_id": 1});
 
         console.log(buff);
         device_client.write(buff);
     }
 
-    var send_login = function(device_id, mac){
-        var buff = new Buffer(10 + 18);
-        util.setCommonPart(buff, {"type": 0x31, "packet_id": 1});
-        (new Buffer(device_id)).copy(buff, 8);
-        mac.copy(buff, 20);
-        util.setChecksum(buff);
+    var send_login = function(device_id){
+        var buff = new Buffer(util.REQ_HEADER_SIZE + 16);
+        util.setReqCommonPart(buff, {"type": 0xa0, "packet_id": 1});
+        console.log(device_id);
+        device_id.copy(buff, util.REQ_HEADER_SIZE);
 
         console.log(buff);
         device_client.write(buff);
     }
 
-    var send_status = function(device_id, 
-                               state,
-                               temperature,
-                               humidity,
-                               battery,
-                               locked) 
+    var send_status = function(device_id)
     {
-        var buff = new Buffer(10 + 18 + 6);
-        util.setCommonPart(buff, {"type": 0x32, "packet_id": 1});
-        (new Buffer(device_id)).copy(buff, 12);
-        buff[24] = state;
-        buff[25] = temperature;
-        buff[26] = humidity;
-        buff.writeUInt16BE(battery, 27);
-        buff[29]= locked;
-        util.setChecksum(buff);
+        var stats = {"Temp": 30};
+        var stats_buffer = util.serializeStatus(stats);
+        var buff = new Buffer(util.REQ_HEADER_SIZE + 16 + stats_buffer.length);
+        util.setReqCommonPart(buff, {"type": 0xa2, "packet_id": 1});
+        var index = util.REQ_HEADER_SIZE;
+        device_id.copy(buff, index);
+        index += 16;
+        stats_buffer.copy(buff, index);
 
         console.log(buff);
         device_client.write(buff);
     }
 
     var send_sync_time = function(device_id){
-        var buff = new Buffer(10 + 16);
-        util.setCommonPart(buff, {"type": 0x33, "packet_id": 1});
-        (new Buffer(device_id)).copy(buff, 12);
-        util.setChecksum(buff);
+        var buff = new Buffer(util.REQ_HEADER_SIZE);
+        util.setReqCommonPart(buff, {"type": 0xa7, "packet_id": 1});
 
         console.log(buff);
         device_client.write(buff);
@@ -158,7 +95,7 @@ var device_test = function(device_id){
 }
 posix.setrlimit('nofile', {'soft': 10000, 'hard': 10000});
 
-for(var i = 2090; i < 2091; i++)
+for(var i = 200; i < 201; i++)
 {
-    device_test("RELEASE1" + util.formatNumber(i, 4));
+    device_test(util.createDeviceId(i));
 }

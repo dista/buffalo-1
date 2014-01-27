@@ -3,12 +3,12 @@ var util = require("./util.js");
 var mysql = require("mysql");
 
 var db;
-var dbname = "buffalo";
-var use_pool = true;
+var dbname = "buffalox";
+var use_pool = false;
 var db_config = {
     host: "localhost",
-    user: "buffalo",
-    password: "buffalo",
+    user: "root",
+    password: "123456",
     database: dbname
     }
 
@@ -29,8 +29,8 @@ function connect_with_reconnect_enable(){
 
         /*
         db.query('use ' + dbname, function(){
-            for(var i = 0; i <= 5000; i++){
-                db.query('INSERT INTO device (device_id, ssid) VALUES (?, ?)', ["RELEASE1" + util.formatNumber(i, 4), util.formatNumber(i, 4)]);
+            for(var i = 0; i <= 500; i++){
+                db.query('INSERT INTO device (device_id) VALUES (?)', [util.createDeviceId(i)]);
                 console.log(i);
             }
         });
@@ -54,7 +54,7 @@ function connect_with_reconnect_enable(){
                 db.query('CREATE INDEX name_pass_index ON user(name, password)', function(){
                 db.query('CREATE INDEX email_pass_index ON user(email, password)', function(){
                 db.query('CREATE TABLE device (id INT PRIMARY KEY AUTO_INCREMENT, device_id VARCHAR(16) UNIQUE NOT NULL, ssid VARCHAR(32), mac VARCHAR(32), state TINYINT DEFAULT 0, temperature TINYINT DEFAULT 0,' +
-                       'humidity TINYINT DEFAULT 0, battery SMALLINT DEFAULT 0, locked TINYINT DEFAULT 0, online TINYINT DEFAULT 0, last_login DATETIME, login_times INT DEFAULT 0, timezone VARCHAR(32))', function(){
+                       'humidity TINYINT DEFAULT 0, battery SMALLINT DEFAULT 0, locked TINYINT DEFAULT 0, online TINYINT DEFAULT 0, last_login DATETIME, login_times INT DEFAULT 0, timezone VARCHAR(32), master_id INT DEFAULT -1)', function(){
                 db.query('CREATE INDEX device_id_index ON device(device_id)', function(){
                 db.query('CREATE TABLE user_device(user_id INT, device_id INT)', function(){
                 db.query('CREATE INDEX user_id_index on user_device(user_id)', function(){
@@ -235,8 +235,8 @@ exports.get_device_by_device_id = function(device_id, cb){
     });
 }
 
-exports.set_device_login = function(id, mac, cb){
-    query_wrapper("UPDATE device set mac=?, last_login=?, login_times=(login_times+1), online=1 WHERE id=?", [mac, (new Date()), id], cb);
+exports.set_device_login = function(id, cb){
+    query_wrapper("UPDATE device set last_login=?, login_times=(login_times+1), online=1 WHERE id=?", [(new Date()), id], cb);
 }
 
 exports.set_state = function(id, state, cb){

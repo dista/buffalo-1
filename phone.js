@@ -82,115 +82,79 @@ exports.create_phone = function(c, one_step_cb) {
             }
 
             var len = util.checkMsg(data, start);
-            if(len == null){
-                handle_protocal_error();
-                return null;
-            }
-            else if(len == -2){
+            if(len == -2){
                 // no enough data
                 self.one_step_cb(0);
+                return;
             }
 
-            print_log(native_util.format("request[%s]: %s", (new Date()), util.formatBuffer(data, 10 + len)));
+            print_log(native_util.format("request[%s]: %s", (new Date()), util.formatBuffer(data, util.REQ_HEADER_SIZE + len)));
 
             var msg = {};
-            var type = data[start + 1]; 
+            var type = data[start]; 
             msg["type"] = type;
-            msg["packet_id"] = data.readUInt32BE(start + 2);
+            msg["packet_id"] = data.readUInt32BE(start + 1);
 
             if(self.user == null && type != 0x10 && type != 0x11 && type != 0x12
                && type != 0x1e & type != 0x21 & type != 0x22)
             {
                 print_log("not logined, can't send msg");
-                write_data(util.buildErr(msg, error_code.NOT_LOGINED));
+                write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS,
+                            error_code.ErrorTarget.NOT_SET
+                            ));
                 self.one_step_cb(util.getNextMsgPos(start, len) - start);
                 return;
             }
             
-            if(type == 0x10)
-            {
-                proto_heartbeat(data, start, msg, len);
-                print_log("heartbeat");
-            }
-            else if(type == 0x11)
+            if(type == 0x92)
             {
                 proto_login(data, start, msg, len);
                 print_log("login");
             }
-            else if(type == 0x12)
+            else if(type == 0x90)
             {
                 proto_register(data, start, msg, len);
                 print_log("register");
             }
-            else if(type == 0x14)
+            else if(type == 0x8c)
             {
                 proto_asso(data, start, msg, len);
                 print_log("associate");
             }
-            else if(type == 0x15)
+            else if(type == 0x84)
             {
                 proto_general_control(data, start, msg, len);
                 print_log("control");
             }
-            else if(type == 0x16)
+            else if(type == 0x83)
             {
                 proto_general_control(data, start, msg, len);
                 print_log("query");
             }
-            else if(type == 0x17)
-            {
-                proto_query_all(data, start, msg, len);
-                print_log("query all");
-            }
-            else if(type == 0x18)
-            {
-                proto_general_control(data, start, msg, len);
-                print_log("upload time"); 
-            }
-            else if(type == 0x19)
-            {
-                proto_general_control(data, start, msg, len);
-                print_log("lock");
-            }
-            else if(type == 0x1a)
+            else if(type == 0x91)
             {
                 proto_change_password(data, start, msg, len);
                 print_log("change password");
             }
-            else if(type == 0x1b)
+            else if(type == 0x93)
             {
                 proto_logout(data, start, msg, len);
                 print_log("logout");
             }
-            else if(type == 0x1c)
+            else if(type == 0x8d)
             {
                 proto_del_device(data, start, msg, len);
                 print_log("del device");
             }
-            else if(type == 0x1d)
-            {
-                proto_del_time(data, start, msg, len);
-                print_log("del time"); 
-            }
-            else if(type == 0x1e)
+            else if(type == 0x91)
             {
                 proto_forgot_password(data, start, msg, len);
                 print_log("forgot password");
             }
-            else if(type == 0x20)
-            {
-                proto_general_control(data, start, msg, len);
-                print_log("delete delay");
-            }
-            else if(type == 0x21)
+            else if(type == 0x94)
             {
                 proto_check_email(data, start, msg, len);
                 print_log("check email");
-            }
-            else if(type == 0x22)
-            {
-                proto_check_name(data, start, msg, len);
-                print_log("check name");
             }
             else
             {
@@ -199,19 +163,21 @@ exports.create_phone = function(c, one_step_cb) {
         }
 
         var proto_check_email = function(data, start, msg, len){
-            var email = data.toString('ascii', start + 8, start + 8 + len);
+            var index = util.REQ_HEADER_SIZE;
+            var tmp = util.parseString(data, start, index, len);
+            var email = tmp[1];
 
             var check_email_cb = function(err, result){
                 if(err)
                 {
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
                 if(!result)
                 {
-                    write_data(util.buildErr(msg, error_code.ID_USED));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.USED, error_code.ErrorTarget.EMAIL));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
@@ -226,89 +192,30 @@ exports.create_phone = function(c, one_step_cb) {
             db.check_email(email, check_email_cb);
         }
         
-        var proto_check_name = function(data, start, msg, len){
-            var name = data.toString('ascii', start + 8, start + 8 + len);
-
-            var check_name_cb = function(err, result){
-                if(err)
-                {
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-
-                // check failed
-                if(!result)
-                {
-                    write_data(util.buildErr(msg, error_code.ID_USED));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-                else
-                {
-                    write_data(util.buildGeneralOk(msg));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-            }
-
-            db.check_name(name, check_name_cb);
-        }
-
         var proto_asso = function(data, start, msg, len){
-            var name_pos = [];
-            var ssid_pos = [];
-            var timezone_pos = [];
-            var device_id;
+            var index = util.REQ_HEADER_SIZE;
 
-            name_pos[0] = start + 16;
+            var device_id = util.getDeviceId(data, start, index, 16);
+            index += 16;
 
-            for(var i = start + 16; i < util.getNextMsgPos(start, len) - 2;)
-            {
-                if(data[i] == 0x27)
-                {
-                    if(name_pos.length < 2)
-                    {
-                        name_pos[1] = i;
-                        ssid_pos[0] = i + 1 + 12;
-                        device_id = data.toString('ascii', i+1, i+1+12);
-                        i += 1 + 12;
-                        continue;
-                    }
-                    else if(ssid_pos.length == 0){
-                        ssid_pos[0] = i + 1;
-
-                        break;
-                    }
-                    else if(ssid_pos.length == 1)
-                    {
-                        ssid_pos[1] = i;
-                        timezone_pos[0] = i+1;
-                    }
-                    else{
-                        timezone_pos[1] = i;
-                    }
-                }
-
-                i++;
+            var master_device_id = null;
+            if((device_id[0] & 0x80) != 0){
+                master_device_id = util.getDeviceId(data, start, index, 16);
+                index += 16;
             }
 
-            if(name_pos.length != 2 || ssid_pos.length != 2 || timezone_pos.length != 2)
-            {
-                handle_protocal_error();
-                return;
-            }
+            var tmp = util.parseString(data, start, index, len);
+            index = tmp[0];
+            var timezone = tmp[1];
 
-            var name = data.toString('ascii', name_pos[0], name_pos[1]);
-            var ssid = data.toString('ascii', ssid_pos[0], ssid_pos[1]);
-            var timezone = data.toString('ascii', timezone_pos[0], timezone_pos[1]);
             var device;
+            var master_device;
 
             var user = null;
 
             var asso_user_device_cb = function(err){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
@@ -318,32 +225,124 @@ exports.create_phone = function(c, one_step_cb) {
                 self.one_step_cb(util.getNextMsgPos(start, len) - start);
             }
 
-            var get_user_device_cb = function(err, row){
+            var set_master_id_cb = function(err){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
+                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                    return;
+                }
+                
+                db.asso_user_device(user.id, device.id, asso_user_device_cb);
+            }
+
+            var asso_user_master_device_cb = function(err){
+                if(err){
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
+                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                    return;
+                }
+
+                if(device.master_id == -1){
+                    db.set_master_id(device.id, master_device.id, set_master_id_cb);
+                }
+                else if(device.master_id != master_device.id){
+                    // device already has a master
+                    write_data(util.buildErr(msg, error_code.ErrorCode.USED, error_code.ErrorTarget.DEVICE));
+                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                    return;
+                }
+                else{
+                    //
+                    db.asso_user_device(user.id, device.id, asso_user_device_cb);
+                }
+            }
+
+            var get_master_user_device_cb = function(err, row){
+                if(err){
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
                 if(row){
-                    write_data(util.buildErr(msg, error_code.DEVICE_USED));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
+                    if(row.user_id != self.user.id){
+                        write_data(util.buildErr(msg, error_code.ErrorCode.USED, error_code.ErrorTarget.DEVICE));
+                        self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                        return;
+                    }
+                    
+                    if(device.master_id == -1){
+                        db.set_master_id(device.id, master_device.id, set_master_id_cb);
+                    }
+                    else if(device.master_id != master_device.id){
+                        // device already has a master
+                        write_data(util.buildErr(msg, error_code.ErrorCode.USED, error_code.ErrorTarget.DEVICE));
+                        self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                        return;
+                    }
+                    else{
+                        //
+                        db.asso_user_device(user.id, device.id, asso_user_device_cb);
+                    }
                 }
                 else{
-                    db.asso_user_device(user.id, device.id, asso_user_device_cb);
+                    // asso master device
+                    db.asso_user_device(user.id, master_device.id, asso_user_master_device_cb);
                 }
             }
 
-            var get_device_by_device_id_cb = function(err, row){
+            var get_master_device_id_cb = function(err, row){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
                 if(!row){
-                    write_data(util.buildErr(msg, error_code.DEVICE_ID_NOT_FOUND));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS,
+                                error_code.ErrorTarget.NOT_SET));
+                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                    return;
+                }
+
+                master_device = row;
+
+                db.get_user_device(row.id, get_master_user_device_cb);
+            }
+
+            var get_user_device_cb = function(err, row){
+                if(err){
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
+                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                    return;
+                }
+
+                if(row){
+                    write_data(util.buildErr(msg, error_code.ErrorCode.USED, error_code.ErrorTarget.NOT_SET));
+                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                    return;
+                }
+                else{
+                    if(master_device_id == null){
+                        db.asso_user_device(user.id, device.id, asso_user_device_cb);
+                    }
+                    else{
+                        db.get_device_by_device_id(master_device_id,
+                                get_master_device_id_cb);
+                    }
+                }
+            }
+
+            var get_device_by_device_id_cb = function(err, row){
+                if(err){
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
+                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                    return;
+                }
+
+                if(!row){
+                    write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS,
+                                error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
@@ -358,43 +357,25 @@ exports.create_phone = function(c, one_step_cb) {
                 db.get_user_device(row.id, get_user_device_cb);
             }
 
-            var get_user_cb = function(err, row){
-                if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-
-                if(!row)
-                {
-                    write_data(util.buildErr(msg, error_code.NO_USER));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-
-                user = row;
-                db.get_device_by_device_id(device_id,
-                        get_device_by_device_id_cb);
-            }
-            db.get_user_by_name(name, get_user_cb);
+            db.get_device_by_device_id(device_id,
+                    get_device_by_device_id_cb);
         }
 
         var proto_register = function(data, start, msg, len){
-            var str = data.toString('ascii', start + 8, start + 8 + len - 1);
-            var items = str.split("|");
-            var name = items[0]; var email = items[1]; var password = items[2]; 
+            var index = util.REQ_HEADER_SIZE;
 
-            // name, email, password
-            if(items.length != 3)
-            {
-                handle_protocal_error();
-                return;
-            }
+            var tmp = util.parseString(data, start, index, len);
+            index = tmp[0];
+            var email = tmp[1];
+
+            tmp = util.parseString(data, start, index, len);
+            var password = tmp[1];
+            var name = "";
 
             var register_user_cb = function(err){
                 if(err)
                 {
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
@@ -406,14 +387,16 @@ exports.create_phone = function(c, one_step_cb) {
             var check_email_cb = function(err, result){
                 if(err)
                 {
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
                 if(!result)
                 {
-                    write_data(util.buildErr(msg, error_code.EMAIL_USED));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.USED,
+                                error_code.ErrorTarget.EMAIL
+                                ));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
@@ -423,36 +406,26 @@ exports.create_phone = function(c, one_step_cb) {
                 }
             }
 
-            var check_name_cb = function(err, result){
-                if(err)
-                {
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-
-                // check failed
-                if(!result)
-                {
-                    write_data(util.buildErr(msg, error_code.USER_EXISTS));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-                else
-                {
-                    db.check_email(email, check_email_cb);
-                }
-            }
-
-            db.check_name(name, check_name_cb);
+            db.check_email(email, check_email_cb);
         }
 
         var proto_change_password = function(data, start, msg, len){
-            // -1, not include 0x27
-            var new_password = data.toString('ascii', start + 16, start + 8 + len -1);
+            var index = util.REQ_HEADER_SIZE;
+
+            var tmp = util.parseString(data, start, index, len);
+            index = tmp[0];
+            var email = tmp[1];
+
+            tmp = util.parseString(data, start, index, len);
+            index = tmp[0];
+            var password = tmp[1];
+
+            tmp = util.parseString(data, start, index, len);
+            var new_password = tmp[1];
+
             var set_password_cb = function(err){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                 }
                 else
                 {
@@ -473,38 +446,34 @@ exports.create_phone = function(c, one_step_cb) {
         }
 
         var proto_login = function(data, start, msg, len){
-            var str = data.toString('ascii', start + 8, start + 8 + len - 1);
-            var items = str.split("|");
-            var name_or_email = items[0]; var password = items[1]; 
-            var is_email = false;
+            var index = util.REQ_HEADER_SIZE;
 
-            if(name_or_email.indexOf("@") != -1){
-                is_email = true;
-            }
+            var tmp = util.parseString(data, start, index, len);
+            index = tmp[0];
+            var email = tmp[1];
+
+            tmp = util.parseString(data, start, index, len);
+            var password = tmp[1];
+            var is_email = true;
 
             var user = null;
             var get_by_name_or_email_cb = function(err, row){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
                 if(!row)
                 {
-                    var reason = error_code.NO_USER;
-                    if(is_email){
-                        reason = error_code.EMAIL_NOT_FOUND;
-                    } 
-
-                    write_data(util.buildErr(msg, reason));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS, error_code.ErrorTarget.EMAIL));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return
                 }
                 
                 if(row.password != db.get_hashed_password(password))
                 {
-                    write_data(util.buildErr(msg, error_code.PASSWD_ERR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS, error_code.ErrorTarget.PASSWORD));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return
                 }
@@ -512,121 +481,46 @@ exports.create_phone = function(c, one_step_cb) {
                 user = row;
                 self.session_id = ++session_id_count;
 
-                var all_devices;
-                var send_resp = false;
                 var on_get_all_devices = function(err, rows){
                     if(err){
-                        write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                         self.one_step_cb(util.getNextMsgPos(start, len) - start);
                         return;
                     }
 
                     var all_devices = rows;
-                    var done_count = 0;
-
-                    var on_get_time_by_device_id = function(err, rows, ctx){
-                        if(send_resp){return;}
-
-                        if(err){
-                            send_resp = true;
-                            write_data(util.buildErr(msg, error_code.DB_ERROR));
-                            self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                            return;
-                        }
-
-                        if(ctx != null)
-                        {
-                            done_count++;
-                            ctx["time"] = rows;
-                        }
-
-                        // special case: ctx == null
-                        if(done_count == all_devices.length || ctx == null){
-                            var buff_count = 9 + 5 + 1;
-                            for(var i = 0; i < all_devices.length; i++){
-                                var device = all_devices[i];
-                                buff_count+= 12 + device.ssid.length + 1 + 1 + 1 + 1 + 2 + 1 + 1; 
-                                buff_count+= 1; // time count
-
-                                var time = device["time"];
-                                for(var j = 0; j < time.length; j++)
-                                {
-                                    buff_count += 6;
-                                }
-                            }
-
-                            var buff = new Buffer(10 + buff_count);
-                            util.setCommonPart(buff, msg);
-                            buff[8] = 0x01;
-                            for(var i = 0; i < 8; i++){
-                                buff[9+i] = 65 // all 'A'
-                            }
-                            //buff.writeUInt32BE(self.session_id, 13);
-                            buff[17] = all_devices.length;
-
-                            var index = 18;
-                            for(var i = 0; i < all_devices.length; i++){
-                                var device = all_devices[i];
-                                var times = device["time"];
-                                (new Buffer(device.device_id)).copy(buff, index);
-                                index += 12;
-                                (new Buffer(device.ssid)).copy(buff, index);
-                                index += device.ssid.length;
-                                buff[index++] = 0x27;
-                                buff[index++] = device.state;
-                                buff[index++] = device.temperature;
-                                buff[index++] = device.humidity;
-                                buff.writeUInt16BE(device.battery, index); index +=2;
-                                buff[index++] = device.locked;
-                                buff[index++] = device.online;
-
-                                buff[index++] = times.length;
-                                for(var j = 0; j < times.length; j++)
-                                {
-                                    var time = times[j];
-                                    buff[index++] = time.sid;
-                                    buff.writeUInt16BE(time.start_time, index); index += 2;
-                                    buff.writeUInt16BE(time.end_time, index); index += 2;
-                                    buff[index++] = time.repeatx;
-                                } 
-                            }
-
-                            util.setIp(buff, index, config.old_ip, config.new_ip);
-                            util.setChecksum(buff);
-                            write_data(buff);
-    
-                            self.user = user; 
-                            db.set_login_info(user.id);
-                            phones.push(self);
-                            self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                        }
+                    var ret_size = util.RESP_HEADER_SIZE + 1;
+                    if(config.old_ip != config.new_ip){
+                        ret_size += 8;
                     }
-
-                    if(all_devices.length > 0)
-                    {
-                        for(var i = 0; i < all_devices.length; i++)
-                        {
-                            var row = rows[i];
-                            db.get_time_by_device_id(row.id, on_get_time_by_device_id, row);
-                        }
+                    ret_size += 4 + all_devices.length * 7;
+                    var ret = new Buffer(ret_size);
+                    var ret_index = util.RESP_HEADER_SIZE;
+                    if(config.old_ip == config.new_ip){
+                        ret[ret_index++] = 0;
                     }
                     else{
-                        on_get_time_by_device_id(null, null, null);
-                        /*
-                        var buff = new Buffer(10 + 15);
-                        util.setCommonPart(buff, msg);
-                        buff[8] = 0x01;
-                        buff.writeUInt32BE(0, 9);
-                        buff.writeUInt32BE(self.session_id, 13);
-                        buff[17] = all_devices.length;
-                        util.setIp(buff, 18, config.old_ip, config.new_ip);
-                        util.setChecksum(buff);
-                        write_data(buff);
-
-                        phones.push(self);
-                        self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                        */
+                        ret[ret_index++] = 1;
+                        util.setIp(ret, ret_index, config.old_ip, config.new_ip);
+                        ret_index += 4;
+                        ret.writeUInt32BE(config.port, ret_index);
+                        ret_index += 4;
                     }
+
+                    ret.writeUInt32BE(all_devices.length, ret_index);
+                    ret_index += 4;
+                    for(var i in all_devices){
+                        var device = all_devices[i];
+                        ret.writeUInt16BE(device.temperature, ret_index);
+                        ret_index += 2;
+                        ret[ret_index++] = device.locked;
+                        // skip int
+                        ret_index += 4;
+                    }
+
+                    util.setCommonPart(ret, msg, true);
+                    write_data(ret);
+                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
                 }
 
                 db.get_all_devices(row.id, on_get_all_devices); 
@@ -641,62 +535,27 @@ exports.create_phone = function(c, one_step_cb) {
 
             var get_device_by_device_id_cb = function(err, row){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
                 if(!row){
-                    write_data(util.buildErr(msg, error_code.DEVICE_ID_NOT_FOUND));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS,
+                                error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
-                var del_from_time_cb = function(err){
-                    if(err){
-                        write_data(util.buildErr(msg, error_code.DB_ERROR));
-                    }
-                    else{
-
-                        write_data(util.buildGeneralOk(msg));
-                    }
-                    
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                }
-
-                var get_time_by_device_id_cb = function(err, rows){
-                    if(err){
-                        write_data(util.buildErr(msg, error_code.DB_ERROR));
-                        self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                        return;
-                    }
-
-                    var embed = embed_device.find_by_device_id(device_id);
-                    if(embed){
-                        /*
-                        for(var i = 0; i < rows.length; i++){
-                            embed.del_time(rows[i].sid, util.dummy);
-                        }
-                        */
-
-                        embed.del_time(100, util.dummy);
-
-                        //embed.lock(0, util.dummy);
-                        //embed.control(0, 0, util.dummy);
-                    }
-
-                    db.del_from_time(row.id, del_from_time_cb);
-                }
-
                 var del_from_user_device_cb = function(err){
                     if(err){
-                        write_data(util.buildErr(msg, error_code.DB_ERROR));
+                        write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                         self.one_step_cb(util.getNextMsgPos(start, len) - start);
                         return;
                     }
 
-                    device = row;
-                    db.get_time_by_device_id(row.id, get_time_by_device_id_cb);
+                    write_data(util.buildGeneralOk(msg));
+                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
                 }
 
                 db.del_from_user_device(row.id, self.user.id, del_from_user_device_cb);
@@ -705,70 +564,12 @@ exports.create_phone = function(c, one_step_cb) {
             db.get_device_by_device_id(device_id, get_device_by_device_id_cb);
         }
 
-        var proto_del_time = function(data, start, msg, len){
-            var device_id = data.toString('ascii', start + 16, start + 16 + 12);
-            var time_id = data[start + 16 + 12];
-
-            var embed = embed_device.find_by_device_id(device_id);
-            if(embed == null || embed.device == null)
-            {
-                write_data(util.buildErr(msg, error_code.DEVICE_OFFLINE));
-                self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                return;
-            }
-            
-            var get_all_devices_cb = function(err, rows)
-            {
-                if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-
-                var found = false;
-                for(var i = 0; i < rows.length; i++){
-                    if(rows[i].id == embed.device.id){
-                        found = true;
-                        break;
-                    } 
-                }
-
-                if(!found){
-                    write_data(util.buildErr(msg, error_code.DEVICE_ID_NOT_FOUND));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-
-                var on_del_time = function(result, code){
-                    if(result == 0){
-                        write_data(util.buildErr(msg, code));
-                        self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                        return;
-                    }
-
-                    var del_time_cb = function(err){
-                        if(err){
-                            write_data(util.buildErr(msg, error_code.DB_ERROR));
-                        }
-                        else{
-                            write_data(util.buildGeneralOk(msg));
-                        }
-                        self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    }
-
-                    db.del_time(time_id, embed.device.id, del_time_cb);
-                }
-
-                embed.del_time(time_id, on_del_time);  
-            }
-
-            db.get_all_devices(self.user.id, get_all_devices_cb);
-        }
-
         var proto_forgot_password = function(data, start, msg, len){
-            var email = data.toString('ascii', start + 8, start + 8 + len);
             var password;
             var user;
+            var index = util.REQ_HEADER_SIZE;
+            var tmp = util.parseString(data, start, index, len);
+            var email = tmp[1];
 
             /*
             var send_mail_cb = function(err, mail_msg){
@@ -785,25 +586,29 @@ exports.create_phone = function(c, one_step_cb) {
 
             var set_password_cb = function(err){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
-                notification.send_mail(email, user.name, password, util.dummy); 
+                notification.send_mail(email, user.email, password, util.dummy); 
                 write_data(util.buildGeneralOk(msg));
                 self.one_step_cb(util.getNextMsgPos(start, len) - start);
             }
 
             var get_by_name_or_email_cb = function(err, row){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR,
+                                error_code.ErrorTarget.NOT_SET
+                                ));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
                 if(!row){
-                    write_data(util.buildErr(msg, error_code.EMAIL_NOT_FOUND));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS,
+                                error_code.ErrorTarget.EMAIL
+                                ));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
@@ -817,63 +622,24 @@ exports.create_phone = function(c, one_step_cb) {
             db.get_by_name_or_email(email, true, get_by_name_or_email_cb);
         }
         
-        var proto_query_all = function(data, start, msg, len){
-            var get_all_devices_cb = function(err, rows){
-                if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    return;
-                }
-
-                var payload_len = 2 + 1;
-                for(var i = 0; i < rows.length; i++){
-                    payload_len += 12 + 7 + rows[i].ssid.length + 1;
-                }
-
-                var buff = new Buffer(10 + payload_len);
-                util.setCommonPart(buff, msg);
-                buff[8] = 0x01;
-                var index = 8 + 2 + 1;
-                buff[index - 1] = rows.length;
-
-                for(var i = 0; i < rows.length; i++)
-                {
-                    var row = rows[i];
-                    var device_buff = new Buffer(12 + 7 + row.ssid.length + 1);
-                    device_buff[device_buff.length - 1] = 0x27;
-                    (new Buffer(row.device_id)).copy(device_buff, 0);
-                    device_buff[12] = row.state;
-                    device_buff[13] = row.temperature;
-                    device_buff[14] = row.humidity;
-                    device_buff.writeUInt16BE(row.battery, 15);
-                    device_buff[17] = row.locked;
-                    device_buff[18] = row.online;
-                    (new Buffer(row.ssid)).copy(device_buff, 19);
-                    device_buff.copy(buff, index);
-                    index += device_buff.length;
-                }
-                util.setChecksum(buff);
-                write_data(buff);
-                
-                self.one_step_cb(util.getNextMsgPos(start, len) - start);
-            }
-
-            db.get_all_devices(self.user.id, get_all_devices_cb);
-        }
-
         var proto_general_control = function(data, start, msg, len){
-            var device_id = data.toString('ascii', start + 16, start + 16 + 12);
+            var index = util.REQ_HEADER_SIZE;
+            var device_id = util.getDeviceId(data, start, index, 16);
 
             var embed = embed_device.find_by_device_id(device_id);
             if(embed == null)
             {
-                write_data(util.buildErr(msg, error_code.DEVICE_OFFLINE));
+                write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS,
+                            error_code.ErrorTarget.NOT_SET
+                            ));
                 self.one_step_cb(util.getNextMsgPos(start, len) - start);
                 return;
             }
             var get_all_devices_cb = function(err, rows){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR,
+                                error_code.ErrorTarget.NOT_SET
+                                ));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
@@ -887,146 +653,33 @@ exports.create_phone = function(c, one_step_cb) {
                 }
 
                 if(!found){
-                    write_data(util.buildErr(msg, error_code.DEVICE_ID_NOT_FOUND));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS,
+                                error_code.ErrorTarget.NOT_SET
+                                ));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
-                var on_proto_general_control = function(result, code) {
-                    if(result == 1)
-                    {
-                        if(msg["type"] == 0x15){
-                            if(data.readUInt32BE(start + 29) == 0){
-                                db.set_state(embed.device.id, data[start+28], util.dummy);
-                            }
-                        }
-                        else if(msg["type"] == 0x19){
-                            db.set_locked(embed.device.id, data[start+28]);
-                        }
+                var phone_device_cmd_map = {
+                    0x84: 0xa5,
+                    0x83: 0xa6
+                }
 
-                        write_data(util.buildGeneralOk(msg));
-                    }
-                    else{
-                        write_data(util.buildErr(msg, code));
-                    }
+                var device_phone_cmd_map = {
+                    0xa5: 0x84,
+                    0xa6: 0x83
+                }
 
+                var on_proto_general_control = function(buff) {
+                    buff[0] = device_phone_cmd_map[buff[0]];
+                    write_data(buff);
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                 }
-            
-                if(msg["type"] == 0x15)
-                { 
-                    embed.control(data[start+28], data.readUInt32BE(start + 29), on_proto_general_control);
-                }
-                else if(msg["type"] == 0x16)
-                {
-                    var on_query_cb = function(result, code, state, temperature, humidity, battery, locked){
-                        if(result != 1){
-                            write_data(util.buildErr(msg, code));
-                        }
-                        else
-                        {
-                            db.set_device_status(embed.device.device_id, state, temperature, humidity, battery, locked, util.dummy);
 
-                            var buff = new Buffer(10 + 8);
-                            util.setCommonPart(buff, msg);
-                            buff[8] = 0x01;
-                            buff[10] = state;
-                            buff[11] = temperature;
-                            buff[12] = humidity;
-                            buff.writeUInt16BE(battery, 13);
-                            buff[15] = locked;
-                            util.setChecksum(buff);
-                            write_data(buff);
-                        }
-
-                        self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                    }
-
-                    embed.query(on_query_cb);
-                }
-                else if(msg["type"] == 0x18)
-                {
-                    var count = data[start + 28];
-                    var done_count = 0;
-                    var resp_send = false;
-                    var on_add_or_update_time = function(err){
-                        if(resp_send){
-                            return;
-                        }
-
-                        if(err){
-                            resp_send = true;
-                            write_data(util.buildErr(msg, error_code.DB_ERROR));
-                            self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                            return;
-                        }
-
-                        done_count++;
-
-                        if(done_count == count)
-                        {
-                            write_data(util.buildGeneralOk(msg));
-                            self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                            return;
-                        }
-                    }
-
-                    var on_get_by_sid_cb = function(err, row, ctx){
-                        if(resp_send){
-                            return;
-                        }
-
-                        if(err){
-                            resp_send = true;
-                            write_data(util.buildErr(msg, error_code.DB_ERROR));
-                            self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                            return;
-                        }
-                        
-                        var is_update = false;
-                        if(row){
-                            is_update = true;
-                        }    
-
-                        db.add_or_update_time(is_update, 
-                                              embed.device.id,
-                                              ctx["sid"],
-                                              ctx["start_time"],
-                                              ctx["end_time"],
-                                              ctx["repeatx"],
-                                              on_add_or_update_time);
-                    }
-
-                    var on_upload_time = function(result, code){
-                        if(result != 1){
-                            write_data(util.buildErr(msg, code));
-                            self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                            return;
-                        }
-
-                        var index = start + 29;
-                        for(var i = 0; i < count; i++){
-                            var db_data = {};
-                            db_data["sid"] = data[index];
-                            db_data["start_time"] = data.readUInt16BE(index+1);
-                            db_data["end_time"] = data.readUInt16BE(index + 3);
-                            db_data["repeatx"] = data[index + 5];
-
-                            db.get_by_sid(db_data["sid"], embed.device.id, on_get_by_sid_cb, db_data);
-                        }
-                    }
-                    var request_buff = new Buffer(len - 20);
-                    data.copy(request_buff, 0, start + 28, start + 28 + request_buff.length);
-                    embed.upload_time(request_buff, on_upload_time);
-                }
-                else if(msg["type"] == 0x19)
-                {
-                    embed.lock(data[start+28], on_proto_general_control);
-                }
-                else if(msg["type"] == 0x20)
-                {
-                    embed.del_delay(on_proto_general_control);
-                }
+                var device_req_buff = new Buffer(len);
+                data.copy(device_req_buff, 0, start, start + len);
+                device_req_buff[0] = phone_device_cmd_map[data[start]];
+                embed.general_control(device_req_buff[0], device_req_buff, on_proto_general_control);
             }
 
             db.get_all_devices(self.user.id, get_all_devices_cb);

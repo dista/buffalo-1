@@ -1,16 +1,13 @@
-exports.NO_USER = 0x01;
-exports.PASSWD_ERR = 0x02;
-exports.USER_EXISTS = 0x04;
-exports.DEVICE_ID_NOT_FOUND = 0x08;
-exports.DEVICE_USED = 0x0B;
-exports.TOO_MANY_DEVICES = 0x0C;
-exports.EMAIL_USED = 0x0D;
-exports.EMAIL_NOT_FOUND = 0x0E;
-exports.EMAIL_SEND_ERROR = 0x0F;
-exports.ID_USED = 0x10;
-exports.DEVICE_OFFLINE = 0x20;
-exports.DEVICE_LOCKED = 0x22;
-exports.DEVICE_TIMEOUT = 0x23;
-exports.DEVICE_LOGINED = 0x64;
-exports.NOT_LOGINED = 0x65;
-exports.DB_ERROR = 0x66;
+exports.ErrorCode = {
+    "NOT_EXISTS": 0x01,
+    "TIMEOUT": 0x02,
+    "INTERNAL_ERROR": 0x03,
+    "USED": 0x04
+};
+
+exports.ErrorTarget = {
+    "NOT_SET": 0x00,
+    "EMAIL": 0x01,
+    "PASSWORD": 0x02,
+    "DEVICE": 0x03
+};

@@ -36,13 +36,14 @@ exports.getTimeBCD = function(timezone)
 {
     var d = getDateByTimezone(timezone);
 
-    var r = new Buffer(6);
-    r[0] = d.year() - 2000;
-    r[1] = d.month() + 1;
-    r[2] = d.date();
-    r[3] = d.hour();
-    r[4] = d.minute();
-    r[5] = d.second();
+    var r = new Buffer(7);
+    r[0] = Math.floor(d.year() / 100);
+    r[1] = d.year() % 100;
+    r[2] = d.month() + 1;
+    r[3] = d.date();
+    r[4] = d.hour();
+    r[5] = d.minute();
+    r[6] = d.second();
 
     for(var i = 0; i < r.length; i++)
     {
@@ -86,41 +87,54 @@ exports.formatDeviceId = function(device_id)
     return ret;
 }
 
-var setCommonPart = function(buff, msg)
+var setRespCommonPart = function(buff, msg, is_success)
 {
-    buff.fill(0);
-    buff[0] = 0x97;
-    buff[1] = msg['type'];
-    buff.writeUInt32BE(msg['packet_id'], 2);
-    buff[buff.length - 1] = 0x99;
-    buff.writeUInt16BE(buff.length - 10, 6); 
+    buff[0] = msg['type'];
+    if('packet_id' in msg){
+        buff.writeUInt32BE(msg['packet_id'], 1);
+    }
+    buff.writeUInt32BE(buff.length - 10, 6); 
+
+    buff[5] = 0;
+    if(is_success){
+        buff[5] = 1;
+    }
 }
 
-exports.setCommonPart = setCommonPart;
+var setReqCommonPart = function(buff, msg){
+    buff[0] = msg['type'];
+    buff.writeUInt32BE(msg['packet_id'], 1);
+    buff.writeUInt32BE(buff.length - REQ_HEADER_SIZE, 5);
+}
 
-exports.buildErr = function(msg, error)
+var RESP_HEADER_SIZE = 10;
+var REQ_HEADER_SIZE = 9;
+exports.RESP_HEADER_SIZE = RESP_HEADER_SIZE;
+exports.REQ_HEADER_SIZE = REQ_HEADER_SIZE;
+
+exports.setRespCommonPart = setRespCommonPart;
+exports.setReqCommonPart = setReqCommonPart;
+
+exports.buildErr = function(msg, err_code, err_target)
 {
-    var buff = new Buffer(10+2);
-    setCommonPart(buff, msg);
-    buff[8] = 0x00;
-    buff[9] = error;
-    setChecksum(buff);
+    var buff = new Buffer(RESP_HEADER_SIZE+2);
+    setRespCommonPart(buff, msg, false);
+    buff[RESP_HEADER_SIZE] = err_code;
+    buff[RESP_HEADER_SIZE+1] = err_target;
     
     return buff; 
 }
 
 exports.getNextMsgPos = function(start, len)
 {
-    return start + 10 + len;
+    return start + REQ_HEADER_SIZE + len;
 }
 
 exports.buildGeneralOk = function(msg)
 {
-    var buff = new Buffer(10+2);
-    setCommonPart(buff, msg);
-    buff[8] = 0x01;
-    setChecksum(buff);
-    
+    var buff = new Buffer(RESP_HEADER_SIZE);
+    setRespCommonPart(buff, msg, true);
+
     return buff; 
 }
 
@@ -139,30 +153,19 @@ var setChecksum = function(buff)
 exports.setChecksum = setChecksum;
 
 exports.checkMsg = function(data, start){
-    // there is enough data, buf not start with 0x97, protocal err
-    if(start < data.length && data[start] != 0x97){
-        return null;
-    }
-
-    if(start + 8 > data.length)
+    if(start + REQ_HEADER_SIZE > data.length)
     {
         return -2;
     }
 
-    var len = data.readUInt16BE(start + 6);
+    var len = data.readUInt32BE(start + 5);
 
-    if(start + 10 + len > data.length)
+    if(start + REQ_HEADER_SIZE + len > data.length)
     {
         return -2;
     }
 
-    // there is enough data, buf not end with 0x99, protocal err
-    if(data[start + 10 + len - 1] != 0x99)
-    {
-        return null;
-    }
-
-    return len;
+    return len +REQ_HEADER_SIZE;
 }
 
 exports.setIp = function(buff, index, oldip, newip){
@@ -194,7 +197,7 @@ exports.time2buff = function(time){
 exports.dummy = function(){
 }
 
-exports.formatNumber = function(num, len){
+var formatNumber = function(num, len){
     var ret = "" + num;
 
     while(ret.length < len){
@@ -203,6 +206,8 @@ exports.formatNumber = function(num, len){
 
     return ret.slice(0, len);
 }
+
+exports.formatNumber = formatNumber;
 
 exports.formatBuffer = function(buff, len){
     if(len == undefined){
@@ -224,4 +229,106 @@ exports.formatBuffer = function(buff, len){
     }
 
     return ret;
+}
+
+exports.getDeviceId = function(data, start, pos, len){
+    var buffer = new Buffer(len);
+    data.copy(buffer, 0, start + pos, start + pos + len);
+    return buffer;
+}
+
+var keyRules = {
+    'Temp': 'short'
+}
+
+var parseString = function(data, start, pos, len){
+    if((pos + 4) > len){
+        return [-2, ""];
+    }
+
+    var str_len = data.readUInt32BE(start + pos);
+    pos += 4;
+    var key = data.toString('utf8', start + pos, start + pos + str_len);
+    pos += str_len;
+
+    if(!(key in keyRules)){
+        return [-1, ""];
+    }
+
+    return new Array(pos, key);
+}
+
+exports.parseStatus = function(data, start, pos, len){
+    var stats = {};
+    while(pos < len){
+        var tmp = parseString(data, start, pos, len);
+        pos = tmp[0];
+        if(pos == -1){
+            return NULL;
+        }
+        var key = tmp[1];
+
+        if(keyRules[key] == 'short'){
+            if(pos + 2 > len){
+                throw 'parseStatus error, no enough data';
+            }
+
+            stats[key] = data.readUInt16BE(start + pos);
+            pos += 2;
+        }
+    }
+
+    return stats;
+}
+
+var writeString = function(buff, index, str){
+    var sb = new Buffer(str, 'utf8')
+    buff.writeUInt32BE(sb.length, index);
+    index += 4;
+    sb.copy(buff, index);
+    index += sb.length;
+
+    return index;
+}
+
+exports.serializeStatus = function(stats){
+    var size = 0;
+    for(key in stats){
+        var sb = new Buffer(key, 'utf8')
+        size += 4 + sb.length;
+
+        if(keyRules[key] == 'short'){
+            size += 2;
+        }
+    }
+
+    var buff = new Buffer(size);
+    var index = 0;
+    for(key in stats){
+        index = writeString(buff, index, key);
+        if(keyRules[key] == 'short')
+        {
+            buff.writeUInt16BE(stats[key], index);
+            index += 2;
+        } 
+    } 
+
+    return buff;
+}
+
+exports.createDeviceId = function(n){
+    var deviceId = new Buffer(16);
+    deviceId.fill(0);
+    if(n % 2){
+        deviceId[0] = 0x01;
+    }
+    else{
+        deviceId[0] = 0x81;
+    }
+
+    var n = formatNumber(n); 
+    var nBuffer = new Buffer(n);
+    nBuffer.copy(deviceId, 16 - nBuffer.length);
+
+    return deviceId;
 }

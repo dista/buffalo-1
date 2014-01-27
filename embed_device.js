@@ -10,7 +10,7 @@ var native_util = require('util');
 var embeds = {};
 var proxies = {};
 var user_id_count = 0;
-var package_id = 0;
+var packet_id = 0;
 var timeout_mseconds = 5000;
 var proxy_id = 0;
 var pending_proxy_cbs = {};
@@ -27,7 +27,7 @@ if(config.debug_cluster){
     }, 60000);
 }
 
-var build_general_msg_cluster = function(msg, type, result, code){
+var build_general_msg_cluster = function(msg, type, buff){
     var ret = {};
     ret["to"] = "device";
     ret["type"] = type;
@@ -38,15 +38,14 @@ var build_general_msg_cluster = function(msg, type, result, code){
     ret["proxy_id"] = msg["proxy_id"];
     ret["device_id"] = msg["device_id"];
     ret["data"] = {};
-    ret["data"]["result"] = result;
-    ret["data"]["code"] = code;
+    ret["data"]["buff"] = buff;
    
     return ret; 
 }
 
-var send_general_msg_cluster = function(msg, type, result, code){
+var send_general_msg_cluster = function(msg, type, buff){
     var ret = build_general_msg_cluster(
-                        msg, type, result, code
+                        msg, type, buff
                     );
 
     send_msg_to_master(ret);
@@ -70,86 +69,38 @@ exports.notify_msg = function(msg){
                 db.set_online(device.id);
             }
         }
-        else if(type == "del_time"
-               || type == "control"
-               || type == "upload_time"
-               || type == "lock"
-               || type == "del_delay"
-               || type == "query"
-               || type == "end"
+        else if(type == "general_control"
+                || type == "end"
         ){
-            var general_cb = function(result, code){
-                send_general_msg_cluster(msg, type + "_cb", result, code);
-            }
-
-            var query_cb = function(result, code, state, temperature,
-                    humidity, battery, locked)
-            {
-                var ret = build_general_msg_cluster(msg, type + "_cb", result, code);
-                ret["data"]["state"] = state;
-                ret["data"]["temperature"] = temperature;
-                ret["data"]["humidity"] = humidity;
-                ret["data"]["battery"] = battery;
-                ret["data"]["locked"] = locked;
-
-                send_msg_to_master(ret);
+            var general_control_cb = function(buff){
+                send_general_msg_cluster(msg, type + "_cb", buff);
             }
 
             var device = find_by_device_id(msg["device_id"]);
             if(!device){
-                send_general_msg_cluster(msg, type + "_cb", 0, error_code.DEVICE_ID_NOT_FOUND); 
+                send_general_msg_cluster(msg, type + "_cb", util.buildErr(msg,
+                            error_code.ErrorCode.NOT_EXISTS,
+                            error_code.ErrorTarget.NOT_SET
+                            )); 
             }
             else{
-                if(type == "del_time"){
-                    device.del_time(msg["data"]["time_id"], general_cb);
+                if(type == "general_control"){
+                    var buff = new Buffer(msg["data"]["buff"]);
+                    device.general_control(buff[0], buff, general_control_cb);
                 }
-                else if(type == "end")
-                {
+                else{
                     device.end();
-                    var ret = build_general_msg_cluster(msg, type + "_cb", 1, 0);
-                    send_msg_to_master(ret);
-                }
-                else if(type == "control")
-                {
-                    device.control(msg["data"]["open_or_not"],
-                                   msg["data"]["delay"],
-                                   general_cb);
-                }
-                else if(type == "upload_time"){
-                    device.upload_time(new Buffer(msg["data"]["buff"]),
-                                       general_cb);
-                }
-                else if(type == "lock"){
-                    device.lock(msg["data"]["locked"],
-                                general_cb);
-                }
-                else if(type == "del_delay"){
-                    device.del_delay(general_cb);
-                }
-                else if(type == "query"){
-                    device.query(query_cb);
                 }
             }
         }
-        else if(type == "del_time_cb"
-               || type == "control_cb"
-               || type == "upload_time_cb"
-               || type == "lock_cb"
-               || type == "del_delay_cb"
-               || type == "query_cb")
+        else if(type == "general_control_cb")
         {
             var device = find_by_device_id(msg["device_id"]);
 
             if(device && device.is_cluster() && device.server_id == msg["from"]
                && device.proxy_id == msg["proxy_id"])
             {
-                if(type == "query_cb")
-                {
-                    device.query_cb(msg);
-                }
-                else{
-                    device.general_cb(msg);
-                }
+                device.general_control_cb(msg);
             }
         }
         else if(type == "login"){
@@ -338,7 +289,7 @@ exports.create_embed_device = function(c, one_step_cb) {
             var i = 0;
             for(; i < pending_cbs.length; i++)
             {
-                if(pending_cbs[i]["package_id"] == pid)
+                if(pending_cbs[i]["packet_id"] == pid)
                 {
                     ret = pending_cbs[i];
                     ret["is_handled"] = true;
@@ -365,8 +316,8 @@ exports.create_embed_device = function(c, one_step_cb) {
         var device_timeout = function(msg){
             if(!msg["is_handled"])
             {
-                get_pending_cb(msg["package_id"]);
-                msg["cb"](0, error_code.DEVICE_TIMEOUT);
+                get_pending_cb(msg["packet_id"]);
+                msg["cb"](0, util.buildErr(msg, error_code.ErrorCode.TIMEOUT, error_code.ErrorTarget.NOT_SET));
             }
         }
 
@@ -374,60 +325,15 @@ exports.create_embed_device = function(c, one_step_cb) {
          * payload: payload without device id, can be null
          */
         this.general_control = function(type, payload, cb){
-            var msg = {"package_id": ++package_id, "cb": cb, "is_handled": false};
+            var msg = {"packet_id": ++packet_id, "type": type, "cb": cb, "is_handled": false};
             pending_cbs.push(msg);
 
             setTimeout(device_timeout, timeout_mseconds, msg);
 
-            var device_id_buff = new Buffer(self.device_id);
-
-            var payload_len = 0;
-            if(payload){
-                payload_len = payload.length;
-            }
-
-            var buff = new Buffer(10 + 12 + payload_len);
-            util.setCommonPart(buff, {"packet_id": msg["package_id"], "type": type});
-            device_id_buff.copy(buff, 8);
-            if(payload)
-            {
-                payload.copy(buff, 20);
-            }
-            util.setChecksum(buff);
+            payload[0] = type;
+            payload.writeUInt32BE(msg["packet_id"], 1);
 
             write_data(buff);
-        }
-
-        this.query = function(cb) {
-            this.general_control(0x42, null, cb);
-        }
-
-        this.lock = function(locked, cb) {
-            var buff = new Buffer(1);
-            buff[0] = locked;
-            this.general_control(0x43, buff, cb);
-        }
-
-        this.del_delay = function(cb) {
-            this.general_control(0x46, null, cb);
-        }
-
-        this.del_time = function(time_id, cb) {
-            var buff = new Buffer(1);
-            buff[0] = time_id;
-
-            this.general_control(0x45, buff, cb);
-        }
-
-        this.upload_time = function(buff, cb) {
-            this.general_control(0x44, buff, cb);
-        }
-
-        this.control = function(open_or_not, delay, cb){
-            var buff = new Buffer(5);
-            buff[0] = open_or_not;
-            buff.writeUInt32BE(delay, 1);
-            this.general_control(0x41, buff, cb);
         }
 
         this.end = function(){
@@ -461,78 +367,55 @@ exports.create_embed_device = function(c, one_step_cb) {
             }
 
             var len = util.checkMsg(data, start);
-            if(len == null){
-                handle_protocal_error();
-                return null;
-            }
-            else if(len == -2){
+            if(len == -2){
                 // no enough data
                 self.one_step_cb(0);
+                return;
             }
 
-            print_log(native_util.format("request[%s]: %s", (new Date()), util.formatBuffer(data, 10 + len)));
+            print_log(native_util.format("request[%s]: %s", (new Date()), util.formatBuffer(data, util.REQ_HEADER_SIZE, len)));
 
             var msg = {};
-            var type = data[start + 1]; 
+            var type = data[start]; 
             msg["type"] = type;
-            msg["packet_id"] = data.readUInt32BE(start + 2);
+            msg["packet_id"] = data.readUInt32BE(start + 1);
 
-            if(self.device == null && type != 0x31){
+            if(self.device == null && type != 0xa0){
                 print_log("not logined, can't send msg");
-                write_data(util.buildErr(msg, error_code.NOT_LOGINED));
+                write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS, 
+                            error_code.ErrorTarget.NOT_SET
+                            ));
                 self.one_step_cb(util.getNextMsgPos(start, len) - start);
                 return;
             }
             
-            if(type == 0x30)
+            if(type == 0xa1)
             {
                 proto_heartbeat(data, start, msg, len);
                 print_log("heartbeat");
             }
-            else if(type == 0x31)
+            else if(type == 0xa0)
             {
                 proto_login(data, start, msg, len);
                 print_log("login");
             }
-            else if(type == 0x32)
+            else if(type == 0xa2)
             {
                 proto_status(data, start, msg, len);
                 print_log("status");
             }
-            else if(type == 0x33)
+            else if(type == 0xa7)
             {
                 proto_sync_time(data, start, msg, len);
                 print_log("sync time");
             }
-            else if(type == 0x41)
+            else if(type == 0xa5)
             {
                 proto_general_control_response(data, start, msg, len);
-                print_log("control response");
             }
-            else if(type == 0x42)
-            {
-                proto_query_response(data, start, msg, len);
-                print_log("query response");
-            }
-            else if(type == 0x43)
+            else if(type == 0xa6)
             {
                 proto_general_control_response(data, start, msg, len);
-                print_log("lock response");
-            }
-            else if(type == 0x44)
-            {
-                proto_general_control_response(data, start, msg, len);
-                print_log("upload time response");
-            }
-            else if(type == 0x45)
-            {
-                proto_general_control_response(data, start, msg, len);
-                print_log("del_time response");
-            }
-            else if(type == 0x46)
-            {
-                proto_general_control_response(data, start, msg, len);
-                print_log("del_delay response");
             }
             else
             {
@@ -541,11 +424,10 @@ exports.create_embed_device = function(c, one_step_cb) {
         }
 
         var proto_login = function(data, start, msg, len){
-            self.device_id = data.toString('ascii', start + 8, start + 8 + 12);
+            self.device_id = util.getDeviceId(data, start, 9, 16);
+            console.log(self.device_id);
 
             rm_another_logined();
-
-            var mac = data.toString('hex', start + 8 + 12, start + 8 + 12 + 6);
 
             var after_logined = function(){
                 embeds[self.device_id] = self;
@@ -562,63 +444,48 @@ exports.create_embed_device = function(c, one_step_cb) {
 
             var set_device_login_cb = function(err){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
-                var get_time_by_device_id_cb = function(err, rows){
-                    if(err){
-                        write_data(util.buildErr(msg, error_code.DB_ERROR));
-                        self.one_step_cb(util.getNextMsgPos(start, len) - start);
-                        return;
-                    }
-
-                    var buff = new Buffer(10 + 13 + 1 + 6 * rows.length + 5);
-                    util.setCommonPart(buff, msg);
-                    buff[8] = 0x01;
-                    self.user_id = ++user_id_count;
-                    buff.writeUInt32BE(self.user_id, 10);
-                    var dateBCD = util.getTimeBCD(self.device.timezone);
-                    dateBCD.copy(buff, 14);
-                    buff[20] = util.getWeek(self.device.timezone);
-                    
-                    var index = 21;
-                    buff[index++] = rows.length;
-                    for(var i = 0; i < rows.length; i++)
-                    {
-                        var time = rows[i];
-                        buff[index++] = time.sid;
-                        buff.writeUInt16BE(time.start_time, index); index += 2;
-                        buff.writeUInt16BE(time.end_time, index); index += 2;
-                        buff[index++] = time.repeatx;
-                    }
-
-                    util.setIp(buff, index, config.old_ip, config.new_ip);
-                    util.setChecksum(buff);
-                    write_data(buff);
-
-                    after_logined();
-                    self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                var buff;
+                if(config.old_ip == config.new_ip)
+                {
+                    buff = new Buffer(util.RESP_HEADER_SIZE + 9);
+                }
+                else{
+                    buff = new Buffer(util.RESP_HEADER_SIZE + 13);
                 }
 
-                db.get_time_by_device_id(self.device.id, get_time_by_device_id_cb);
+                var index = util.RESP_HEADER_SIZE;
+                var dateBCD = util.getTimeBCD(self.device.timezone);
+                dateBCD.copy(buff, index);
+                index += 7;
+                buff[index] = util.getWeek(self.device.timezone);
+                index += 1;
+                util.setIp(buff, index, config.old_ip, config.new_ip);
+                util.setRespCommonPart(buff, msg, true);
+
+                write_data(buff);
+                self.one_step_cb(util.getNextMsgPos(start, len) - start);
             }
 
             var get_device_by_device_id_cb = function(err, row){
                 if(err){
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return;
                 }
 
                 if(!row){
-                    write_data(util.buildErr(msg, error_code.DEVICE_ID_NOT_FOUND));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.NOT_EXISTS,
+                                error_code.ErrorTarget.NOT_SET));
                     self.one_step_cb(util.getNextMsgPos(start, len) - start);
                     return
                 }
 
-                db.set_device_login(row.id, mac, set_device_login_cb);
+                db.set_device_login(row.id, set_device_login_cb);
                 self.device = row;
             }
 
@@ -628,39 +495,46 @@ exports.create_embed_device = function(c, one_step_cb) {
         var proto_heartbeat = function(data, start, msg, len){
             write_data(util.buildGeneralOk(msg));
 
-            /*
-            if(self.device){
-                db.set_online(self.device.id); 
-            }
-            */
-
             self.one_step_cb(util.getNextMsgPos(start, len) - start);
         }
 
         var proto_sync_time = function(data, start, msg, len){
-            var buff = new Buffer(10 + 7);
-            util.setCommonPart(buff, msg);
+            var buff = new Buffer(util.RESP_HEADER_SIZE + 8);
+            var index = util.RESP_HEADER_SIZE;
             var dateBCD = util.getTimeBCD(self.device.timezone);
-            dateBCD.copy(buff, 8);
-            buff[8 + 6] = util.getWeek(self.device.timezone);
-            util.setChecksum(buff);
+            dateBCD.copy(buff, index);
+            index += 7;
+            buff[index++] = util.getWeek(self.device.timezone);
+            util.setRespCommonPart(buff, msg, true);
             
             write_data(buff);
             self.one_step_cb(util.getNextMsgPos(start, len) - start);
         }
 
         var proto_status = function(data, start, msg, len){
-            var device_id = data.toString('ascii', start + 12, start + 12 + 12);
-            var state = data[start + 12 + 12];
-            var temperature = data[start + 12 + 12 + 1];
-            var humidity = data[start + 12 + 12 + 2];
-            var battery = data.readUInt16BE(start + 12 + 12 + 3);
-            var locked = data[start + 12 + 12 + 5]; 
+            var index = util.REQ_HEADER_SIZE;
+            var device_id = util.getDeviceId(data, start, index, 16);
+            index += 16;
+            var stats = util.parseStatus(data, start, index, len);
+
+            if(stats == null){
+                write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
+                self.one_step_cb(util.getNextMsgPos(start, len) - start);
+                return;
+            }
+
+            console.log(stats);
+
+            var state = 1;
+            var temperature = stats['Temp'];
+            var humidity = 0;
+            var battery = 0;
+            var locked = 0;
 
             var set_device_status_cb = function(err){
                 if(err)
                 {
-                    write_data(util.buildErr(msg, error_code.DB_ERROR));
+                    write_data(util.buildErr(msg, error_code.ErrorCode.INTERNAL_ERROR, error_code.ErrorTarget.NOT_SET));
                 }
                 else{
                     write_data(util.buildGeneralOk(msg));
@@ -672,45 +546,19 @@ exports.create_embed_device = function(c, one_step_cb) {
             db.set_device_status(device_id, state, temperature, humidity, battery, locked, set_device_status_cb);
         }
 
-        var proto_query_response = function(data, start, msg, len) {
-            var result = data[start + 8];
-            var pid = data.readUInt32BE(start + 2);
-
-            var cb = get_pending_cb(pid);
-
-            if(cb == null)
-            {
-                print_log("proto_query_response: can't find request for package_id " + pid);
-            }
-            else{
-                if(result != 1){
-                    cb["cb"](result, data[start + 9]);      
-                }
-                else{
-                    cb["cb"](result, data[start + 9], 
-                            data[start+10], //state
-                            data[start+11], //temperature
-                            data[start+12], // humidity
-                            data.readUInt16BE(start + 13), //battery
-                            data[start+15]); // locked
-
-                }
-            }
-            
-            self.one_step_cb(util.getNextMsgPos(start, len) - start);
-        }
-
         var proto_general_control_response = function(data, start, msg, len) {
-            var pid = data.readUInt32BE(start + 2);
+            var pid = data.readUInt32BE(start + 1);
             var cb = get_pending_cb(pid);
 
             if(cb == null)
             {
-                print_log("can't find request for package_id " + pid);
+                print_log("can't find request for packet_id " + pid);
             }
             else
             {
-                cb["cb"](data[start + 8], data[start + 9]);
+                var buff = new Buffer(len);
+                data.copy(buff, 0, start, start + len); 
+                cb["cb"](buff);
             }
 
             self.one_step_cb(util.getNextMsgPos(start, len) - start);
@@ -760,14 +608,6 @@ var cluster_device = function(server_id, proxy_id, device_id, device){
         send_msg_to_master(msg);
     }
 
-    this.del_time = function(time_id, cb){
-        var msg = {};
-        msg["data"] = {};
-        msg["data"]["time_id"] = time_id;
-        msg["type"] = "del_time";
-        this.send_to_server(msg, cb);
-    }
-
     this.end = function(){
         var msg = {};
         msg["data"] = {};
@@ -775,7 +615,7 @@ var cluster_device = function(server_id, proxy_id, device_id, device){
         this.send_to_server(msg);
     }
 
-    this.general_cb = function(msg){
+    this.general_control_cb = function(msg){
         var cb = pending_cbs[msg["cb_id"]];
 
         if(cb){
@@ -783,78 +623,15 @@ var cluster_device = function(server_id, proxy_id, device_id, device){
             delete pending_cbs[msg["cb_id"]];
         }
 
-        cb["cb"](msg["data"]["result"], msg["data"]["code"]);
+        cb["cb"](new Buffer(msg["data"]["buff"]));
     }
 
-    this.del_time_cb = function(msg){
-        this.general_cb(msg);
-    }
-
-    this.control = function(open_or_not, delay, cb){
+    this.general_control = function(buff, cb){
         var msg = {};
-        msg["data"] = {};
-        msg["data"]["open_or_not"] = open_or_not;
-        msg["data"]["delay"] = delay;
-        msg["type"] = "control";
-        this.send_to_server(msg, cb);
-    }
-
-    this.control_cb = function(msg){
-        this.general_cb(msg);
-    }
-
-    this.query = function(cb){
-        var msg = {};
-        msg["type"] = "query";
-        this.send_to_server(msg, cb);
-    }
-
-    this.query_cb = function(msg){
-        var cb = pending_cbs[msg["cb_id"]];
-
-        if(cb){
-            cb["is_handled"] = true;
-            delete pending_cbs[msg["cb_id"]];
-        }
-
-        cb["cb"](msg["data"]["result"], msg["data"]["code"],
-                msg["data"]["state"], msg["data"]["temperature"],
-                msg["data"]["humidity"], msg["data"]["battery"],
-                msg["data"]["locked"]);
-    }
-
-    this.upload_time = function(buff, cb){
-        var msg = {};
-        msg["type"] = "upload_time";
+        msg["type"] = "general_control";
         msg["data"] = {};
         // TODO: to see if buff can be serialized
         msg["data"]["buff"] = buff;
         this.send_to_server(msg, cb);
-    }
-
-    this.upload_time_cb = function(msg){
-        this.general_cb(msg);
-    }
-
-    this.lock = function(locked, cb){
-        var msg = {};
-        msg["type"] = "lock";
-        msg["data"] = {};
-        msg["data"]["locked"] = locked;
-        this.send_to_server(msg, cb);
-    }
-
-    this.lock_cb = function(msg){
-        this.general_cb(msg);
-    }
-
-    this.del_delay = function(cb){
-        var msg = {};
-        msg["type"] = "del_delay";
-        this.send_to_server(msg, cb);
-    }
-
-    this.del_delay_cb = function(msg){
-        this.general_cb(msg);
     }
 }

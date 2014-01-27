@@ -3,7 +3,7 @@ var embed_device = require('./embed_device.js');
 var phone = require('./phone.js');
 var posix = require('posix');
 var cluster = require('cluster');
-var port = 7000;
+var port = 8000;
 
 function handleClient(c)
 {
@@ -51,13 +51,13 @@ function handleClient(c)
     var handle_proto = function(){
         if(!type_determined)
         {
-            var type_cate = buff[buff_index + 1] & 0xf0;
-            if(type_cate == 0x30)
+            var type_cate = buff[buff_index];
+            if(type_cate >= 0xa0 && type_cate <= 0xa7)
             {
                 device = "embed";
                 device_interface = embed_device.create_embed_device(sock, one_step_cb);
             }
-            else if(type_cate == 0x10 || type_cate == 0x20)
+            else if(type_cate >= 0x83 && type_cate <= 0x96)
             {
                 device = "phone";
                 device_interface = phone.create_phone(sock, one_step_cb);
