@@ -93,7 +93,7 @@ var setRespCommonPart = function(buff, msg, is_success)
     if('packet_id' in msg){
         buff.writeUInt32BE(msg['packet_id'], 1);
     }
-    buff.writeUInt32BE(buff.length - 10, 6); 
+    buff.writeUInt32BE(buff.length - RESP_HEADER_SIZE, 6); 
 
     buff[5] = 0;
     if(is_success){
@@ -152,20 +152,28 @@ var setChecksum = function(buff)
 
 exports.setChecksum = setChecksum;
 
-exports.checkMsg = function(data, start){
-    if(start + REQ_HEADER_SIZE > data.length)
+exports.checkMsg = function(data, start, is_resp){
+    var header_size = REQ_HEADER_SIZE;
+    var len_pos = 5;
+    if(is_resp){
+        header_size = RESP_HEADER_SIZE;
+        len_pos = 6;
+    }
+
+    if(start + header_size > data.length)
     {
         return -2;
     }
 
-    var len = data.readUInt32BE(start + 5);
+    var len = data.readUInt32BE(start + len_pos);
+    console.log(len);
 
-    if(start + REQ_HEADER_SIZE + len > data.length)
+    if(start + header_size + len > data.length)
     {
         return -2;
     }
 
-    return len +REQ_HEADER_SIZE;
+    return len + header_size;
 }
 
 exports.setIp = function(buff, index, oldip, newip){
@@ -209,14 +217,18 @@ var formatNumber = function(num, len){
 
 exports.formatNumber = formatNumber;
 
-exports.formatBuffer = function(buff, len){
+exports.formatBuffer = function(buff, start, len){
+    if(start == undefined){
+        start = 0;
+    }
+
     if(len == undefined){
         len = buff.length;
     }
 
     var ret = "";
     for(var i = 0; i < len; i++){
-        var tmp = buff[i].toString(16);
+        var tmp = buff[i + start].toString(16);
         if(tmp.length < 2){
             tmp = "0" + tmp;
         }
@@ -246,17 +258,16 @@ var parseString = function(data, start, pos, len){
         return [-2, ""];
     }
 
+    var new_pos = start + pos;
     var str_len = data.readUInt32BE(start + pos);
     pos += 4;
     var key = data.toString('utf8', start + pos, start + pos + str_len);
     pos += str_len;
 
-    if(!(key in keyRules)){
-        return [-1, ""];
-    }
-
     return new Array(pos, key);
 }
+
+exports.parseString = parseString;
 
 exports.parseStatus = function(data, start, pos, len){
     var stats = {};
@@ -267,6 +278,10 @@ exports.parseStatus = function(data, start, pos, len){
             return NULL;
         }
         var key = tmp[1];
+
+        if(!(key in keyRules)){
+            throw new Error("status item is not allowed");
+        }
 
         if(keyRules[key] == 'short'){
             if(pos + 2 > len){
@@ -282,13 +297,20 @@ exports.parseStatus = function(data, start, pos, len){
 }
 
 var writeString = function(buff, index, str){
-    var sb = new Buffer(str, 'utf8')
+    var sb = new Buffer(str, 'utf8');
     buff.writeUInt32BE(sb.length, index);
     index += 4;
     sb.copy(buff, index);
     index += sb.length;
 
     return index;
+}
+
+exports.writeString = writeString;
+
+exports.getStringEncodingLen = function(str){
+    var sb = new Buffer(str, 'utf8');
+    return 4 + sb.length;
 }
 
 exports.serializeStatus = function(stats){
@@ -331,4 +353,12 @@ exports.createDeviceId = function(n){
     nBuffer.copy(deviceId, 16 - nBuffer.length);
 
     return deviceId;
+}
+
+exports.is_master_device = function(device_id){
+    if(device_id[0] & 0x80){
+        return false;
+    }
+
+    return true;
 }

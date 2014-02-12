@@ -1,11 +1,11 @@
 var net = require("net");
 var util = require("../util.js");
-var port = 6000;
+var port = 9000;
 var ip = "127.0.0.1"
 
-var phone_test = function(name, device){
+var phone_test = function(name, device, device2){
 var phone_client = net.connect(port, ip, function(){
-    console.log(device);
+    //console.log(device);
     //send_check_name("dista");
     //send_check_email("dista@qq.com");
     /*
@@ -13,10 +13,10 @@ var phone_client = net.connect(port, ip, function(){
         send_register("dista"+i, "dista" + i + "@qq.com", "654321");
     }
     */
-    //send_register("dista90", "dista90@qq.com", "654321");
+    //send_query_status(device);
     //console.log(new Date());
-    //send_register(name, name + "@qq.com", "654321");
-    send_login(name, "654321");
+    //send_register(name + "@qq.com", "654321");
+    send_login(name + "@qq.com", "654321");
     //setTimeout(function(){send_asso(name, device, "myss1id", "Asia/Hong_Kong");}, 1000);
     //setTimeout(function(){send_query_all();}, 1000);
     //setTimeout(function(){send_change_password("654321");}, 1000);
@@ -41,8 +41,15 @@ var phone_client = net.connect(port, ip, function(){
     //setTimeout(function(){send_heartbeat()}, 1000);
 
     phone_client.on('data', function(data){
-        if(data[1] == 0x11){
-            setTimeout(function(){send_asso(name, device, "myss1id", "Asia/Hong_Kong");}, 1000);
+        if(data[0] == 0x92){
+            //send_asso(device, "America/New_York");
+            //send_asso2(device, device2, "America/New_York");
+            //send_query_status(device2);
+
+            send_control_0x11(device, true);
+            //send_control_learn(device);
+            //send_control_lock(device);
+        //    setTimeout(function(){send_asso(name, device, "myss1id", "Asia/Hong_Kong");}, 1000);
             //setInterval(function(){send_control(device, 1, 20);}, 2000);
             //setInterval(function(){send_query_status(device);}, 3000);
             //send_del_delay(device);
@@ -107,11 +114,76 @@ var send_upload_time = function(device_id, times){
     phone_client.write(buff);
 }
 
+// NewApi Done
 var send_query_status = function(device_id){
-    var buff = new Buffer(10 + 20);
-    util.setCommonPart(buff, {"type": 0x16, "packet_id": 1});
-    (new Buffer(device_id)).copy(buff, 16);
-    util.setChecksum(buff);
+    var buff = new Buffer(util.REQ_HEADER_SIZE + 16);
+    util.setReqCommonPart(buff, {"type": 0x83, "packet_id": 5});
+    (new Buffer(device_id)).copy(buff, util.REQ_HEADER_SIZE);
+
+    console.log(buff);
+    phone_client.write(buff);
+}
+
+var send_control_learn = function(device_id){
+    var buff = new Buffer(util.REQ_HEADER_SIZE + 16 + 6);
+    util.setReqCommonPart(buff, {"type": 0x84, "packet_id": 2});
+    (new Buffer(device_id)).copy(buff, util.REQ_HEADER_SIZE);
+    var index = util.REQ_HEADER_SIZE + 16;
+    buff.writeUInt16BE(0x10, index);
+    index += 2;
+    buff.writeUInt32BE(0, index);
+    console.log(buff);
+    phone_client.write(buff);
+}
+
+var send_control_lock = function(device_id){
+    var buff = new Buffer(util.REQ_HEADER_SIZE + 16 + 7);
+    util.setReqCommonPart(buff, {"type": 0x84, "packet_id": 3});
+    (new Buffer(device_id)).copy(buff, util.REQ_HEADER_SIZE);
+    var index = util.REQ_HEADER_SIZE + 16;
+    buff.writeUInt16BE(0x01, index);
+    index += 2;
+    buff.writeUInt32BE(1, index);
+    index += 4;
+    buff[index] = 1;
+    console.log(buff);
+    phone_client.write(buff);
+}
+
+var send_control_0x11 = function(device_id, use_id){
+    var buff;
+    if(use_id){
+        buff = new Buffer(util.REQ_HEADER_SIZE + 16 + 11);
+    }
+    else{
+        buff = new Buffer(util.REQ_HEADER_SIZE + 16 + 7 + 4 + 20);
+    }
+
+    util.setReqCommonPart(buff, {"type": 0x84, "packet_id": 4});
+    (new Buffer(device_id)).copy(buff, util.REQ_HEADER_SIZE);
+    var index = util.REQ_HEADER_SIZE + 16;
+    buff.writeUInt16BE(0x11, index);
+    index += 2;
+    if(use_id){
+        buff.writeUInt32BE(5, index);
+    }
+    else{
+        buff.writeUInt32BE(25, index);
+    }
+
+    index += 4;
+
+    if(use_id){
+        buff[index++] = 1;
+        buff.writeUInt32BE(3, index);
+    }
+    else{
+        buff[index++] = 0;
+        buff.writeUInt32BE(20, index);
+        index += 4;
+        var ir = new Buffer("1234567890abcdefghij");
+        ir.copy(buff, index);
+    }
 
     console.log(buff);
     phone_client.write(buff);
@@ -160,44 +232,70 @@ var send_check_email = function(name){
     phone_client.write(buff);
 }
 
-var send_register = function(name, email, password){
-    var nep = new Buffer(name + "|" + email + "|" + password);
-    var buff = new Buffer(10 + nep.length + 1);
-    util.setCommonPart(buff, {"type": 0x12, "packet_id": 1});
-    nep.copy(buff, 8);
-    buff[8+nep.length] = 0x27;
-    util.setChecksum(buff);
+var send_register = function(email, password){
+    var buff = new Buffer(util.REQ_HEADER_SIZE 
+            + util.getStringEncodingLen(email)
+            + util.getStringEncodingLen(password)
+            );
+
+    util.setReqCommonPart(buff, {"type": 0x90, "packet_id": 1});
+    var index = util.REQ_HEADER_SIZE;
+    index = util.writeString(buff, index, email);
+    util.writeString(buff, index, password);
 
     console.log(buff);
     phone_client.write(buff);
 }
 
-var send_login = function(name, password)
+var send_login = function(email, password)
 {
-    var nep = new Buffer(name + "|" + password);
-    var buff = new Buffer(10 + nep.length + 1);
-    util.setCommonPart(buff, {"type": 0x11, "packet_id": 1});
-    nep.copy(buff, 8);
-    buff[8+nep.length] = 0x27;
-    util.setChecksum(buff);
+    var buff = new Buffer(util.REQ_HEADER_SIZE 
+            + util.getStringEncodingLen(email)
+            + util.getStringEncodingLen(password)
+            );
+
+    util.setReqCommonPart(buff, {"type": 0x92, "packet_id": 1});
+    var index = util.REQ_HEADER_SIZE;
+    index = util.writeString(buff, index, email);
+    util.writeString(buff, index, password);
 
     console.log(buff);
     phone_client.write(buff);
 }
 
-var send_asso = function(name, device_id, ssid, timezone)
+var send_asso = function(device_id, timezone)
 {
-    var buff = new Buffer(10 + 8 + name.length + 1 + 12 + ssid.length + 1 + timezone.length + 1 + 1);
-    util.setCommonPart(buff, {"type": 0x14, "packet_id": 1});
-    (new Buffer(name)).copy(buff, 16);
-    buff[16 + name.length] = 0x27;
-    (new Buffer(device_id)).copy(buff, 16 + name.length + 1);
-    (new Buffer(ssid)).copy(buff, 16 + name.length + 1 + 12);
-    buff[16 + name.length + 1 + 12 + ssid.length] = 0x27;
-    (new Buffer(timezone)).copy(buff, 16 + name.length + 1 + 12 + ssid.length + 1);
-    buff[16 + name.length + 1 + 12 + ssid.length + 1 + timezone.length] = 0x27;
+    console.log("DEVICE ID: ");
+    console.log(device_id);
+    var buff = new Buffer(util.REQ_HEADER_SIZE 
+            + 16
+            + util.getStringEncodingLen(timezone)
+            );
 
-    util.setChecksum(buff);
+    util.setReqCommonPart(buff, {"type": 0x8c, "packet_id": 1});
+    var index = util.REQ_HEADER_SIZE;
+    device_id.copy(buff, index);
+    index += 16;
+    util.writeString(buff, index, timezone);
+
+    console.log(buff);
+    phone_client.write(buff);
+}
+
+var send_asso2 = function(device_id, device_id2, timezone){
+    var buff = new Buffer(util.REQ_HEADER_SIZE 
+            + 16
+            + 16
+            + util.getStringEncodingLen(timezone)
+            );
+
+    util.setReqCommonPart(buff, {"type": 0x8c, "packet_id": 1});
+    var index = util.REQ_HEADER_SIZE;
+    device_id2.copy(buff, index);
+    index += 16;
+    device_id.copy(buff, index);
+    index += 16;
+    util.writeString(buff, index, timezone);
 
     console.log(buff);
     phone_client.write(buff);
@@ -253,5 +351,5 @@ var send_check_email = function(name){
 }
 
 for(var i = 90 ; i < 91; i++){
-    phone_test("dista" + i, "RELEASE1" + util.formatNumber(2000+i, 4));
+    phone_test("dista" + i, util.createDeviceId(i+1), util.createDeviceId(i+2));
 }

@@ -4,7 +4,7 @@ var mysql = require("mysql");
 
 var db;
 var dbname = "buffalox";
-var use_pool = false;
+var use_pool = true;
 var db_config = {
     host: "localhost",
     user: "root",
@@ -62,7 +62,9 @@ function connect_with_reconnect_enable(){
                 db.query('CREATE TABLE IF NOT EXISTS time (sid TINYINT, start_time INT, end_time INT, repeatx TINYINT, device_id INT,'+
                        ' FOREIGN KEY(device_id) REFERENCES device(id))', function(){
                 db.query('CREATE UNIQUE INDEX sid_index ON time(sid, device_id)', function(){
+                db.query('CREATE TABLE ir(id INT PRIMARY KEY AUTO_INCREMENT, ir BLOB)', function(){
                 // last
+                });
                 });
                 });
                 });
@@ -85,9 +87,9 @@ function connect_with_reconnect_enable(){
         console.log('db error', err);
 
         if(err.code === 'PROTOCOL_CONNECTION_LOST') { // Connection to the MySQL server is usually
-            handle_disconnect();                         // lost due to either server restart, or a
+            connect_with_reconnect_enable();          // lost due to either server restart, or a
         } else {                                      // connnection idle timeout (the wait_timeout
-            throw err;                                  // server variable configures this)
+            throw err;                                // server variable configures this)
         }
     });
 }
@@ -235,6 +237,17 @@ exports.get_device_by_device_id = function(device_id, cb){
     });
 }
 
+exports.get_device_by_id = function(id, cb){
+    query_wrapper("SELECT * FROM device WHERE id=?", [id], function(err, rows){
+        if(!err && rows.length > 0){
+            cb(err, rows[0]);
+        }
+        else{
+            cb(err, null);
+        }
+    });
+}
+
 exports.set_device_login = function(id, cb){
     query_wrapper("UPDATE device set last_login=?, login_times=(login_times+1), online=1 WHERE id=?", [(new Date()), id], cb);
 }
@@ -257,24 +270,6 @@ exports.set_device_status = function(device_id, state, temperature, humidity, ba
             device_id],
             cb);
 } 
-
-/*
- * cb(err, result)
- *
- */
-exports.get_device_by_device_id_and_ssid = function(device_id, ssid, cb)
-{
-    query_wrapper("SELECT * FROM device WHERE device_id=? AND ssid=?", [device_id, ssid],
-            function(err, rows){
-                if(!err && rows.length > 0){
-                    cb(err, rows[0]);
-                }
-                else{
-                    cb(err, null);
-                }
-            }
-            );
-}
 
 exports.asso_user_device = function(user_id, device_id, cb)
 {
@@ -360,6 +355,37 @@ exports.set_locked = function(id, locked){
 
 exports.set_ssid = function(id, ssid){
     query_wrapper("UPDATE device set ssid=? WHERE id=?", [ssid, id]);
+}
+
+exports.set_master_id = function(id, master_id, cb){
+    query_wrapper("UPDATE device set master_id=? where id=?", [master_id, id],
+            cb);
+}
+
+exports.get_ir_by_id = function(id, cb){
+    query_wrapper("SELECT * FROM ir WHERE id=?", [id], function(err, rows){
+        if(!err && rows.length > 0){
+            cb(err, rows[0]);
+        }
+        else{
+            cb(err, null);
+        }
+    });
+}
+
+exports.get_ir_by_ir = function(ir, cb){
+    query_wrapper("SELECT * FROM ir WHERE ir=?", [ir], function(err, rows){
+        if(!err && rows.length > 0){
+            cb(err, rows[0]);
+        }
+        else{
+            cb(err, null);
+        }
+    });
+}
+
+exports.set_ir = function(ir, cb){
+    query_wrapper("INSERT INTO ir (ir) VALUES (?)", [ir], cb);
 }
 
 exports.add_or_update_time = function(is_update, device_id, sid, start_time, end_time, repeatx, cb){

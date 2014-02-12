@@ -11,7 +11,6 @@ var embeds = {};
 var proxies = {};
 var user_id_count = 0;
 var packet_id = 0;
-var timeout_mseconds = 5000;
 var proxy_id = 0;
 var pending_proxy_cbs = {};
 
@@ -317,7 +316,7 @@ exports.create_embed_device = function(c, one_step_cb) {
             if(!msg["is_handled"])
             {
                 get_pending_cb(msg["packet_id"]);
-                msg["cb"](0, util.buildErr(msg, error_code.ErrorCode.TIMEOUT, error_code.ErrorTarget.NOT_SET));
+                msg["cb"](util.buildErr(msg, error_code.ErrorCode.TIMEOUT, error_code.ErrorTarget.NOT_SET));
             }
         }
 
@@ -328,12 +327,23 @@ exports.create_embed_device = function(c, one_step_cb) {
             var msg = {"packet_id": ++packet_id, "type": type, "cb": cb, "is_handled": false};
             pending_cbs.push(msg);
 
+            // default is 5 second
+            var timeout_mseconds = 5000;
+            if(type == 0xa5){
+                var cmd = payload.readUInt16BE(util.REQ_HEADER_SIZE + 16);
+                // learn cmd
+                if(cmd == 0x10){
+                    // 120 seconds
+                    timeout_mseconds = 120000;
+                }
+            }
+
             setTimeout(device_timeout, timeout_mseconds, msg);
 
             payload[0] = type;
             payload.writeUInt32BE(msg["packet_id"], 1);
 
-            write_data(buff);
+            write_data(payload);
         }
 
         this.end = function(){
@@ -366,14 +376,27 @@ exports.create_embed_device = function(c, one_step_cb) {
                 self.remotePort = self.sock.remotePort;
             }
 
-            var len = util.checkMsg(data, start);
+            if((start + 1) >= data.length){
+                self.one_step_cb(0);
+                return;
+            }
+
+            var pre_read_type = data[start];
+            var is_resp = false;
+            if(pre_read_type == 0xa5 ||
+               pre_read_type == 0xa6
+                    ){
+                is_resp = true;
+            } 
+
+            var len = util.checkMsg(data, start, is_resp);
             if(len == -2){
                 // no enough data
                 self.one_step_cb(0);
                 return;
             }
 
-            print_log(native_util.format("request[%s]: %s", (new Date()), util.formatBuffer(data, util.REQ_HEADER_SIZE, len)));
+            print_log(native_util.format("request[%s]: %s", (new Date()), util.formatBuffer(data, start, len)));
 
             var msg = {};
             var type = data[start]; 
@@ -391,30 +414,32 @@ exports.create_embed_device = function(c, one_step_cb) {
             
             if(type == 0xa1)
             {
-                proto_heartbeat(data, start, msg, len);
                 print_log("heartbeat");
+                proto_heartbeat(data, start, msg, len);
             }
             else if(type == 0xa0)
             {
-                proto_login(data, start, msg, len);
                 print_log("login");
+                proto_login(data, start, msg, len);
             }
             else if(type == 0xa2)
             {
-                proto_status(data, start, msg, len);
                 print_log("status");
+                proto_status(data, start, msg, len);
             }
             else if(type == 0xa7)
             {
-                proto_sync_time(data, start, msg, len);
                 print_log("sync time");
+                proto_sync_time(data, start, msg, len);
             }
             else if(type == 0xa5)
             {
+                console.log("control response");
                 proto_general_control_response(data, start, msg, len);
             }
             else if(type == 0xa6)
             {
+                console.log("query response");
                 proto_general_control_response(data, start, msg, len);
             }
             else
@@ -425,7 +450,6 @@ exports.create_embed_device = function(c, one_step_cb) {
 
         var proto_login = function(data, start, msg, len){
             self.device_id = util.getDeviceId(data, start, 9, 16);
-            console.log(self.device_id);
 
             rm_another_logined();
 
@@ -466,6 +490,8 @@ exports.create_embed_device = function(c, one_step_cb) {
                 index += 1;
                 util.setIp(buff, index, config.old_ip, config.new_ip);
                 util.setRespCommonPart(buff, msg, true);
+
+                after_logined();
 
                 write_data(buff);
                 self.one_step_cb(util.getNextMsgPos(start, len) - start);
@@ -522,8 +548,6 @@ exports.create_embed_device = function(c, one_step_cb) {
                 self.one_step_cb(util.getNextMsgPos(start, len) - start);
                 return;
             }
-
-            console.log(stats);
 
             var state = 1;
             var temperature = stats['Temp'];

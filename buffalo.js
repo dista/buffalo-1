@@ -3,7 +3,7 @@ var embed_device = require('./embed_device.js');
 var phone = require('./phone.js');
 var posix = require('posix');
 var cluster = require('cluster');
-var port = 8000;
+var port = 9000;
 
 function handleClient(c)
 {
