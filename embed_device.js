@@ -626,7 +626,7 @@ var cluster_device = function(server_id, proxy_id, device_id, device){
             var cbx = {"cb": cb, "is_handled": false};
             pending_cbs[msg["cb_id"]] = cbx;
 
-            setTimeout(send_to_server_timeout, 5000, cbx);
+            //setTimeout(send_to_server_timeout, 5000, cbx);
         }
 
         send_msg_to_master(msg);
@@ -645,7 +645,6 @@ var cluster_device = function(server_id, proxy_id, device_id, device){
         if(cb){
             cb["is_handled"] = true;
             delete pending_cbs[msg["cb_id"]];
-            return;
         }
 
         cb["cb"](new Buffer(msg["data"]["buff"]));
