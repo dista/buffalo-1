@@ -1,5 +1,6 @@
 var assert = require('assert');
 var moment = require('moment-timezone');
+var crypto = require('crypto');
 
 int2BCD = function(d)
 {
@@ -14,6 +15,13 @@ int2BCD = function(d)
     }
 
     return out;
+}
+
+exports.getRandomKey = function(prefix){
+    var rd = Math.floor(Math.random() * 65535);
+    var data = crypto.createHash('md5').update(prefix + (new Date()).getTime() + rd).digest('hex');
+
+    return data;
 }
 
 var getDateByTimezone = function(timezone)
@@ -353,6 +361,34 @@ exports.createDeviceId = function(n){
     nBuffer.copy(deviceId, 16 - nBuffer.length);
 
     return deviceId;
+}
+
+exports.bufferStringToBuffer = function(str){
+    var code0 = '0'.charCodeOf(0);
+    var buff = new Buffer(str.length / 2);
+    for(var i = 0; i < str.length;){
+        var m = i / 2;
+        var p = str.charCodeOf(i) - code0;
+        buff[m] = p * 16;
+        buff[m] += str.charCodeOf(i+1) - code0;
+    }
+
+    return buff;
+}
+
+exports.buffToBufferStr = function(buff){
+    var ret = "";
+    for(var i = 0; i < buff.length; i++){
+        var x = buff[i].toString(16);
+
+        if(x.length < 2){
+            x = '0' + x;
+        }
+
+        ret += x;
+    }
+
+    return ret;
 }
 
 exports.is_master_device = function(device_id){

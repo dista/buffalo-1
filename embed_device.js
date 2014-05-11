@@ -4,8 +4,10 @@ var error_code = require('./error_code.js');
 var config = require('./config.js');
 //var db = require('./db.js');
 var db = require('./mysqldb.js');
-var cluster = require('cluster');
 var native_util = require('util');
+var redis = require('redis');
+var msg_reason = require('./msg_reason.js');
+var phone_client = require('./phone_client');
 
 var embeds = {};
 var proxies = {};
@@ -14,16 +16,11 @@ var packet_id = 0;
 var proxy_id = 0;
 var pending_proxy_cbs = {};
 
+var pubs = [redis.createClient()];
+var sub = redis.createClient();
+
 var find_by_proxy_id = function(proxy_id){
     return proxies[proxy_id];
-}
-
-if(config.debug_cluster){
-    setInterval(function(){
-        if(cluster.worker){
-            console.log("worker[%s] length [%d]", cluster.worker.id, Object.keys(embeds).length);
-        }
-    }, 60000);
 }
 
 var build_general_msg_cluster = function(msg, type, buff){
@@ -218,7 +215,7 @@ exports.create_embed_device = function(c, one_step_cb) {
 
         var print_log = function(msg)
         {
-            console.log("worker[%s]; device[%s]; ip[%s:%s]: %s", cluster.worker.id, self.device_id, self.remoteAddress, self.remotePort, msg); 
+            console.log("worker[%s]; device[%s]; ip[%s:%s]: %s", cluster.worker.id, "", self.remoteAddress, self.remotePort, msg); 
         }
 
         var write_data = function(buff){
@@ -323,8 +320,8 @@ exports.create_embed_device = function(c, one_step_cb) {
         /*
          * payload: payload without device id, can be null
          */
-        this.general_control = function(type, payload, cb){
-            var msg = {"packet_id": ++packet_id, "type": type, "cb": cb, "is_handled": false};
+        this.general_control = function(type, payload, cb, ctx){
+            var msg = {"packet_id": ++packet_id, "type": type, "cb": cb, "ctx": ctx, "is_handled": false};
             pending_cbs.push(msg);
 
             // default is 5 second
@@ -582,7 +579,7 @@ exports.create_embed_device = function(c, one_step_cb) {
             {
                 var buff = new Buffer(len);
                 data.copy(buff, 0, start, start + len); 
-                cb["cb"](buff);
+                cb["cb"](buff, cb['ctx']);
             }
 
             self.one_step_cb(util.getNextMsgPos(start, len) - start);
@@ -592,8 +589,74 @@ exports.create_embed_device = function(c, one_step_cb) {
     }
 
     var device = new embed_device();
+
     return device;
 }
+
+
+var get_pub_by_host_port = function(host, port){
+    return pubs[0];
+}
+
+sub.on('subscribe', function(channel, count){
+});
+
+var build_buff_for_msg = function(device_id, message){
+    var type = message['__type'];
+    if(type == 'query'){
+        return phone_client.build_query_status(device_id);
+    }
+    else if(type == 'control'){
+        var cmd = message['cmd'];
+        if(cmd == 'lock'){
+            return phone_client.build_control_lock(device_id,
+                    message['is_locked']);
+        }
+        else if(cmd == 'learn_signal'){
+            return phone_client.build_control_learn(device_id);
+        }
+        else if(cmd = 'send_ir'){
+            return phone_client.build_control_ir(device_id, message['ir_signal']);
+        }
+    }
+}
+
+sub.on('message', function(channel, message){
+    var message = JSON.parse(message);
+    var device_id = message['device_id'];
+    device_id = util.bufferStringToBuffer(device_id);
+
+    var device = find_by_device_id(device_id);
+    var pub = get_pub_by_host_port(message['__redis_host'],
+        message['__redis_port']);
+
+    if(!device){
+        var retmsg = {};
+        retmsg['__msg_id'] = message['__msg_id'];
+        retmsg['result'] = 'error';
+        retmsg['reason'] = msg_reason.DEVICE_IS_NOT_ONLINE;
+        pub.publish('buffalo_http_api', retmsg); 
+        return;
+    }
+
+    var after_general_control = function(resp_data, msg_id){
+        var r1 = {};
+        r1['__msg_id'] = msg_id;
+        r1['result'] = 'ok';
+        r1['resp_data'] = util.buffToBufferStr(resp_data);
+        pub.publish('buffalo_http_api', r1);
+    }
+
+    if(message['__type'] == 'query' || message['__type'] == 'control'){
+        var buff = build_buff_for_msg(device_id, message);
+        device.general_control(buff[0], buff, after_general_control, message['__msg_id']);
+    }
+    else if(message['__type'] == 'end'){
+        device.end();
+    }
+});
+
+sub.subscribe('buffalo_device');
 
 var cluster_device = function(server_id, proxy_id, device_id, device){
     this.device = device;

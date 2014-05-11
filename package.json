@@ -6,6 +6,11 @@
         "emailjs": "0.3.x",
         "sqlite3": "2.1.x",
         "mysql": "2.0.x",
-        "moment-timezone": "*"
+        "moment-timezone": "*",
+        "hiredis": "0.1.x",
+        "redis": "0.10.x",
+        "express": "4.1.x",
+        "body-parser": "1.0.x",
+        "gm": "1.16.x"
     }
 }

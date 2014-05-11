@@ -2,8 +2,8 @@ var net = require('net');
 var embed_device = require('./embed_device.js');
 var phone = require('./phone.js');
 var posix = require('posix');
-var cluster = require('cluster');
-var port = 9000;
+var port = 8000;
+require('./http_interface.js');
 
 function handleClient(c)
 {
@@ -129,106 +129,16 @@ function handleClient(c)
 
 posix.setrlimit('nofile', {'soft': 10000, 'hard': 10000});
 
-var numCPUs = require('os').cpus().length;
-numCPUs = 1;
-if(cluster.isMaster){
-    var after_init = function(err){
-        if(err){
-            console.log("init device failed");
-            return;
-        }
-
-        for (var i = 0; i < numCPUs; i++) {
-            cluster.fork();
-        }
-
-        function message_handler(msg) {
-            if("server_id" in msg){
-                cluster.workers[msg["server_id"]].send(msg);
-            }
-            else{
-                Object.keys(cluster.workers).forEach(function(id){
-                    if(cluster.workers[id].id != msg.from){
-                        cluster.workers[id].send(msg); 
-                    }
-                });
-            }
-        }
-
-        Object.keys(cluster.workers).forEach(function(id) {
-            cluster.workers[id].on('message', message_handler);
-        });
-
-        var send_worker_exit_msg = function(worker){
-            var msg = {};
-            msg["from"] = -1;
-            msg["type"] = "worker_exit";
-            msg["to"] = "all";
-            msg["data"] = {};
-            msg["data"]["worker"] = worker.id;
-
-            Object.keys(cluster.workers).forEach(function(id){
-                if(cluster.workers[id].id != worker.id){
-                    cluster.workers[id].send(msg); 
-                }
-            });
-        }
-        
-        cluster.on('online', function(new_worker){
-            // the worker is bring back
-            var send_online_to_workers = function(){
-                if(new_worker.old_id){
-                    var msg = {};
-                    msg["from"] = -1;
-                    msg["type"] = "worker_started";
-                    msg["to"] = "all";
-                    msg["data"] = {};
-                    msg["data"]["worker"] = new_worker.id;
-                    Object.keys(cluster.workers).forEach(function(id){
-                        if(cluster.workers[id].id != new_worker.id){
-                            cluster.workers[id].send(msg); 
-                        }
-                    });
-                }
-            }
-
-            send_online_to_workers();
-        });
-
-        cluster.on('exit', function(worker, code, signal) {
-            console.log("EXIT.....");
-                    Object.keys(cluster.workers).forEach(function(id){
-                        if(cluster.workers[id].id != new_worker.id){
-                            cluster.workers[id].kill(); 
-                        }
-                    });
-            //send_worker_exit_msg(worker);
-
-            var restart_worker = function(){
-                console.log('worker [' + worker.id + '][' + worker.process.pid + '] died, restarting...');
-                var new_worker = cluster.fork();
-                new_worker.on('message', message_handler);
-                new_worker.old_id = worker.id;
-            }
-
-            //restart_worker();
-        });
+var after_init = function(err){
+    if(err){
+        console.log("init device failed");
+        return;
     }
-
-    embed_device.init(after_init);
 }
-else{
-    cluster.worker.on('message', function(msg){
-        if(msg["to"] == "device"){
-            embed_device.notify_msg(msg);
-        }
-        else if(msg["to"] == "all"){
-            embed_device.notify_msg(msg);
-        }
+
+embed_device.init(after_init);
+
+var server = net.createServer(handleClient);
+server.listen(port, function(){
+    console.log("Welcome, Buffalo server started. Port " + port + ", server time " + (new Date()));
     });
-
-    var server = net.createServer(handleClient);
-    server.listen(port, function(){
-        console.log("Welcome, Buffalo server started. Port " + port + ", server time " + (new Date()));
-        });
-}
