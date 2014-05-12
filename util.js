@@ -288,9 +288,10 @@ exports.parseStatus = function(data, start, pos, len){
         var key = tmp[1];
 
         if(!(key in keyRules)){
-            throw new Error("status item is not allowed");
+            throw new Error("status item is not allowed, key " + key);
         }
 
+        console.log("key: " + key);
         if(keyRules[key] == 'short'){
             if(pos + 2 > len){
                 throw 'parseStatus error, no enough data';
@@ -364,13 +365,25 @@ exports.createDeviceId = function(n){
 }
 
 exports.bufferStringToBuffer = function(str){
-    var code0 = '0'.charCodeOf(0);
+    var code0 = "0".charCodeAt(0);
+    var charA = 'a'.charCodeAt(0);
     var buff = new Buffer(str.length / 2);
     for(var i = 0; i < str.length;){
         var m = i / 2;
-        var p = str.charCodeOf(i) - code0;
+        var t = str.charCodeAt(i);
+        var p = t - code0;
+        if(t >= charA){
+            p = t - charA + 10;
+        }
         buff[m] = p * 16;
-        buff[m] += str.charCodeOf(i+1) - code0;
+        t = str.charCodeAt(i+1);
+        p = t - code0;
+        if( t >= charA){
+            p = t - charA + 10;
+        }
+        buff[m] += p;
+
+        i = i + 2;
     }
 
     return buff;

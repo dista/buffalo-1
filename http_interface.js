@@ -9,6 +9,7 @@ var notification = require('./notification.js');
 var embed_device = require('./embed_device.js');
 var redis = require('redis');
 var msg_reason = require('./msg_reason.js');
+var fs = require('fs');
 
 var sub = redis.createClient();
 var pubs = [redis.createClient()];
@@ -176,9 +177,17 @@ buffalo.post("/buffalo/login/user", function(req, res){
                             res.type("application/json").json(200, {"result": "error", "password": "密码错误"});
                         }
                         else{
-                            var auth_id = redis_db.set_user_auth_id(row.name, keep_time);
-                            redis_db.set_failed_time(row.name, 0);
-                            res.type("application/json").json(200, {"result": "ok", "auth_id": auth_id});
+                            var get_old_auth_id_cb = function(err, reply){
+                                if(reply){
+                                    redis_db.del_user_auth_id(reply);
+                                }
+
+                                var auth_id = redis_db.set_user_auth_id(row.name, keep_time);
+                                redis_db.set_failed_time(row.name, 0);
+                                res.type("application/json").json(200, {"result": "ok", "auth_id": auth_id});
+
+                            }
+                            redis_db.get_old_auth_id(row.name, get_old_auth_id_cb);
                         }
                     } 
 
@@ -269,20 +278,21 @@ sub.on('subscribe', function(channel, count){
 
 var msg_id = 0;
 var msg_cache = {};
+var timeout_cache = {};
 sub.on('message', function(channel, message){
-    var message = JSON.parse(message);
-    console.log("message from " + channel + ": ");
-    console.log(message);
+    message = JSON.parse(message);
 
-    var mx = msg_cache[message['__msg_id']];
+    var id = message['__msg_id'];
+    var mx = msg_cache[id];
     if(mx){
         mx['cb'](false, message);
-        delete msg_cache[message['__msg_id']];
+        clearTimeout(timeout_cache[id]);
+        delete timeout_cache[id];
+        delete msg_cache[id];
     }
 });
 
-var send_msg = function(device_id, msg, cb){
-    var mco = {};
+var send_msg = function(device_id, mco, cb){
     mco['__msg_id'] = msg_id;
     mco['__redis_host'] = config.api_redis_host;
     mco['__redis_port'] = config.api_redis_port;
@@ -293,20 +303,22 @@ var send_msg = function(device_id, msg, cb){
     var send_msg_cb = function(cbx){
         var xid = cbx['__msg_id'];
 
-        if(!msg_cache[xid]){
+        if(msg_cache[xid]){
             var mx = msg_cache[xid];
             mx['cb'](true, 'timeout');
+            delete timeout_cache[xid];
             delete msg_cache[xid];
         }
     }
 
-    setTimeout(send_msg_cb, 5000, cbx);
+    timeout_cache[msg_id] = setTimeout(send_msg_cb, 5000, mco);
     var pub = get_pub_by_device_id(device_id);
-    pub.publish('buffalo_device', JSON.stringify(msg));
+    pub.publish('buffalo_device', JSON.stringify(mco));
 }
 
 buffalo.post('/buffalo/status/device', function(req, res){
     var auth_id = req.body["auth_id"] || "";
+    var device_id = req.body['device_id'] || "";
 
     var get_user_auth_id_cb = function(err, reply){
         if(!reply){
@@ -314,41 +326,77 @@ buffalo.post('/buffalo/status/device', function(req, res){
         }
         else{
             var user = reply;
-            var status_msg = {"device_id": req.body["device_id"]};
-            status_msg['__type'] = 'query';
+            device_id = util.bufferStringToBuffer(device_id);
 
-            var after_status_resp = function(has_error, ret_v){
-                if(has_error){
-                    res.type("application/json").json(200, {"result": "error", "general_error": ret_v});
-                    return;
-                }
-                else{
-                    var result = ret_v["result"];
-                    if(result == 'error'){
-                        res.type("application/json").json(200, {"result": "error", "general_error": msg_reason.trans(ret_v['reason'])});
+            var do_status = function(device_id){
+                var status_msg = {"device_id": util.buffToBufferStr(device_id)};
+                status_msg['__type'] = 'query';
+
+                var after_status_resp = function(has_error, ret_v){
+                    if(has_error){
+                        res.type("application/json").json(200, {"result": "error", "general_error": ret_v});
+                        return;
                     }
                     else{
-                        var resp_data = util.bufferStringToBuffer(ret_v['resp_data']);
-                        var is_success = resp_data[5];
-                        if(!is_success){
-                            res.type("application/json").json(200, {"result": "error", "general_error": "获取出错"});
-                            return;
+                        var result = ret_v["result"];
+                        if(result == 'error'){
+                            res.type("application/json").json(200, {"result": "error", "general_error": msg_reason.trans(ret_v['reason'])});
                         }
+                        else{
+                            console.log(ret_v['resp_data']);
+                            var resp_data = util.bufferStringToBuffer(ret_v['resp_data']);
+                            var is_success = resp_data[5];
+                            if(!is_success){
+                                res.type("application/json").json(200, {"result": "error", "general_error": "获取出错"});
+                                return;
+                            }
 
-                        var stats = util.parseStatus(resp_data, 0, 10, 
-                                resp_data.readUInt32BE(6));
+                            console.log("Parsing status");
+                            var stats = util.parseStatus(resp_data, 0, 10, 
+                                    resp_data.length);
 
-                        res.type("application/json").json(200, {"result": "ok", "temperature": stats["Temp"], "is_online": 1});
+                            console.log(stats);
+
+                            res.type("application/json").json(200, {"result": "ok", "temperature": stats["Temp"], "is_online": 1});
+                        }
                     }
                 }
+
+                send_msg(status_msg["device_id"], status_msg, after_status_resp);
             }
 
-            send_msg(status_msg["device_id"], status_msg, after_status_resp);
+            if(!util.is_master_device(device_id)){
+                var get_master_device_cb = function(err, row){
+                    if(err){
+                        res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+                        return;
+                    }
+
+                    do_status(new Buffer(row.device_id, 'utf8'));
+                }
+
+                var get_device_by_device_id_cb = function(err, row){
+                    if(err){
+                        res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+                        return;
+                    }
+
+                    if(row.master_id == -1){
+                        res.type("application/json").json(200, {"result": "error", "device_id": "找不到相应的master_device_id"});
+                        return;
+                    }
+
+                    mysqldb.get_device_by_id(row.master_id, get_master_device_cb);
+                }
+                mysqldb.get_device_by_device_id(device_id, get_device_by_device_id_cb);
+            }
+            else{
+                do_status(device_id);
+            }
         }
     }
 
     redis_db.get_user_auth_id(auth_id, get_user_auth_id_cb);
-
 });
 
 buffalo.post('/buffalo/asso/device', function(req, res){
@@ -552,6 +600,213 @@ buffalo.post('/buffalo/de_asso/device', function(req, res){
         }
 
         mysqldb.get_device_by_device_id(device_id, get_device_by_device_id_cb);
+    }
+
+    redis_db.get_user_auth_id(auth_id, get_user_auth_id_cb);
+});
+
+buffalo.post("/buffalo/control/device", function(req, res){
+    var auth_id = req.body['auth_id'] || "";
+    var device_id = req.body['device_id'] || "";
+    var cmd = req.body["cmd"] || "";
+    var ir_signal = null;
+
+    var get_user_auth_id_cb = function(err, reply){
+        if(!reply){
+            res.type("application/json").json(200, {"result": "error", "auth_id": "auth_id不存在"});
+            return;
+        }
+
+        var user = reply;
+        device_id = util.bufferStringToBuffer(device_id);
+
+        var do_control = function(device_id){
+            var control_msg = {"device_id": util.buffToBufferStr(device_id)};
+            control_msg['__type'] = 'control';
+            control_msg['cmd'] = cmd;
+
+            var after_pre_process = function(){
+                if(cmd == 'lock'){
+                    control_msg['is_locked'] = req.body['is_locked'];
+                }
+                else if(cmd == 'send_ir'){
+                    if(req.body['is_ir_id']){
+                        control_msg['ir_signal'] = ir_signal;
+                    }
+                    else{
+                        control_msg['ir_signal'] = req.body['ir_signal'];
+                    }
+                }
+                else if(cmd = 'multi_cmd'){
+                    control_msg['multi_cmd'] = req.body['multi_cmd'];
+                }
+
+                var after_control_resp = function(has_error, ret_v){
+                    if(has_error){
+                        res.type("application/json").json(200, {"result": "error", "general_error": ret_v});
+                        return;
+                    }
+                    else{
+                        var result = ret_v["result"];
+                        if(result == 'error'){
+                            res.type("application/json").json(200, {"result": "error", "general_error": msg_reason.trans(ret_v['reason'])});
+                        }
+                        else{
+                            var resp_data = util.bufferStringToBuffer(ret_v['resp_data']);
+                            var is_success = resp_data[5];
+                            if(!is_success){
+                                res.type("application/json").json(200, {"result": "error", "general_error": "控制错误"});
+                                return;
+                            }
+
+                            // handle resp
+                            if(cmd == 'lock' || cmd == 'send_ir' || cmd == 'multi_cmd'){
+                                res.type("application/json").json(200, {"result": "ok"});
+                            }
+                            else if(cmd == 'learn_signal'){
+                                var ir_len = resp_data.readUInt32BE(6) - 1;
+                                var ir = new Buffer(ir_len);
+                                resp.copy(ir, 0, 11, ir.length);
+
+                                var on_get_ir = function(err, row){
+                                    if(err){
+                                        res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+                                        return;
+                                    }
+
+                                    if(row){
+                                        res.type("application/json").json(200, {"result": "ok", "ir_id": row.id, 'ir_signal': util.buffToBufferStr(ir)});
+                                        return;
+                                    }
+
+                                    var on_set_ir = function(err, result){
+                                        if(err){
+                                            res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+                                            return;
+                                        }
+
+                                        res.type("application/json").json(200, {"result": "ok", "ir_id": result.insertId, 'ir_signal': util.buffToBufferStr(ir)});
+
+                                    }
+
+                                    mysqldb.set_ir(ir, on_set_ir);
+                                }
+
+                                mysqldb.get_ir_by_ir(ir, on_get_ir);
+                            }
+                        }
+                    }
+                }
+
+                send_msg(control_msg['device_id'], control_msg, after_control_resp);
+            }
+
+            if(cmd == 'send_ir'){
+                if(is_ir_id){
+                   var ir_id = req.body["ir_id"] || "";
+                   var get_ir_by_id_cb = function(err, row){
+                       if(err){
+                           res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+                           return;
+                       }
+
+                       if(!row){
+                           res.type("application/json").json(200, {"result": "error", "ir_id": "错误的ir_id"});
+                           return;
+                       }
+
+                       ir_signal = util.buffToBufferStr(row.ir);
+                       after_pre_process();
+                   }
+                   mysqldb.get_ir_by_id(ir_id, get_ir_by_id_cb); 
+                }
+                else{
+                    after_pre_process();
+                }
+            }
+            else{
+                after_pre_process();
+            }
+        }
+
+        if(!util.is_master_device(device_id)){
+            var get_master_device_cb = function(err, row){
+                if(err){
+                    res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+                    return;
+                }
+
+                do_control(new Buffer(row.device_id, 'utf8'));
+            }
+
+            var get_device_by_device_id_cb = function(err, row){
+                if(err){
+                    res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+                    return;
+                }
+
+                if(row.master_id == -1){
+                    res.type("application/json").json(200, {"result": "error", "device_id": "找不到相应的master_device_id"});
+                    return;
+                }
+
+                db.get_device_by_id(row.master_id, get_master_device_cb);
+            }
+            mysqldb.get_device_by_device_id(device_id, get_device_by_device_id_cb);
+        }
+        else{
+            do_control(device_id);
+        }
+    }
+   
+    redis_db.get_user_auth_id(auth_id, get_user_auth_id_cb);
+}
+);
+
+buffalo.post('/buffalo/upload/setting', function(req, res){
+    var data = JSON.stringify(req.body);
+    var auth_id = req.body['auth_id'];
+
+    var get_user_auth_id_cb = function(err, reply){
+        if(err){
+            res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+            return;
+        }
+
+        var user = reply;
+
+        fs.writeFile(__dirname + "/user_data/" + user + "_setting.json", data, function(err){
+            if(err){
+                res.type("application/json").json(500, {"result": "error", "general_error": "fs"});
+                return;
+            }
+
+            res.type("application/json").json(500, {"result": "ok"});
+        });
+    }
+
+    redis_db.get_user_auth_id(auth_id, get_user_auth_id_cb);
+});
+
+buffalo.post('/buffalo/download/setting', function(req, res){
+    var auth_id = req.body['auth_id'];
+
+    var get_user_auth_id_cb = function(err, reply){
+        if(err){
+            res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+            return;
+        }
+
+        var user = reply;
+
+        fs.readFile(__dirname + "/user_data/" + user + "_setting.json", function(err, data){
+            if(err){
+                res.type("application/json").json(500, {"result": "error", "general_error": "fs"});
+                return;
+            }
+
+            res.type("application/json").json(500, {"result": "ok", "setting": JSON.parse(data)});
+        });
     }
 
     redis_db.get_user_auth_id(auth_id, get_user_auth_id_cb);

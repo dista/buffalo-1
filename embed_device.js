@@ -44,7 +44,6 @@ var send_general_msg_cluster = function(msg, type, buff){
                         msg, type, buff
                     );
 
-    send_msg_to_master(ret);
 }
 
 exports.init = function(cb){
@@ -166,7 +165,6 @@ var on_worker_started = function(msg){
             ret["type"] = "login";
             ret["to"] = "device";
 
-            send_msg_to_master(ret);
         }
     }
 }
@@ -215,7 +213,7 @@ exports.create_embed_device = function(c, one_step_cb) {
 
         var print_log = function(msg)
         {
-            console.log("worker[%s]; device[%s]; ip[%s:%s]: %s", cluster.worker.id, "", self.remoteAddress, self.remotePort, msg); 
+            console.log("device[%s]; ip[%s:%s]: %s", "", self.remoteAddress, self.remotePort, msg); 
         }
 
         var write_data = function(buff){
@@ -229,9 +227,6 @@ exports.create_embed_device = function(c, one_step_cb) {
                 if(found){
                     db.set_online(self.device.id);
                 }
-                else{
-                    send_msg_to_master({"type": "remove_device", "device_id": self.device_id, "to": "device"});
-                }
             }
         }
 
@@ -242,7 +237,6 @@ exports.create_embed_device = function(c, one_step_cb) {
             msg["type"] = "exit";
             msg["to"] = "device";
 
-            send_msg_to_master(msg);
         }
 
         var remove_embed_device = function()
@@ -452,15 +446,6 @@ exports.create_embed_device = function(c, one_step_cb) {
 
             var after_logined = function(){
                 embeds[self.device_id] = self;
-
-                var msg = {};
-                msg["proxy_id"] = self.proxy_id;
-                msg["device_id"] = self.device_id;
-                msg["device"] = self.device;
-                msg["type"] = "login";
-                msg["to"] = "device";
-
-                send_msg_to_master(msg);
             }
 
             var set_device_login_cb = function(err){
@@ -603,21 +588,26 @@ sub.on('subscribe', function(channel, count){
 
 var build_buff_for_msg = function(device_id, message){
     var type = message['__type'];
+    var ret;
     if(type == 'query'){
-        return phone_client.build_query_status(device_id);
+        ret = phone_client.build_query_status(device_id);
+        ret[0] = 0xa6;
+        return ret;
     }
     else if(type == 'control'){
         var cmd = message['cmd'];
         if(cmd == 'lock'){
-            return phone_client.build_control_lock(device_id,
+            ret = phone_client.build_control_lock(device_id,
                     message['is_locked']);
         }
         else if(cmd == 'learn_signal'){
-            return phone_client.build_control_learn(device_id);
+            ret = phone_client.build_control_learn(device_id);
         }
         else if(cmd = 'send_ir'){
-            return phone_client.build_control_ir(device_id, message['ir_signal']);
+            ret = phone_client.build_control_ir(device_id, message['ir_signal']);
         }
+
+        ret[0] = 0xa5;
     }
 }
 
@@ -635,16 +625,17 @@ sub.on('message', function(channel, message){
         retmsg['__msg_id'] = message['__msg_id'];
         retmsg['result'] = 'error';
         retmsg['reason'] = msg_reason.DEVICE_IS_NOT_ONLINE;
-        pub.publish('buffalo_http_api', retmsg); 
+        pub.publish('buffalo_http_api', JSON.stringify(retmsg)); 
         return;
     }
 
     var after_general_control = function(resp_data, msg_id){
+        console.log(resp_data);
         var r1 = {};
         r1['__msg_id'] = msg_id;
         r1['result'] = 'ok';
         r1['resp_data'] = util.buffToBufferStr(resp_data);
-        pub.publish('buffalo_http_api', r1);
+        pub.publish('buffalo_http_api', JSON.stringify(r1));
     }
 
     if(message['__type'] == 'query' || message['__type'] == 'control'){
@@ -691,8 +682,6 @@ var cluster_device = function(server_id, proxy_id, device_id, device){
 
             //setTimeout(send_to_server_timeout, 5000, cbx);
         }
-
-        send_msg_to_master(msg);
     }
 
     this.end = function(){

@@ -1,7 +1,7 @@
 var net = require("net");
 var util = require("../util.js");
 var error_code = require("../error_code.js");
-var port = 9000;
+var port = 8000;
 var posix = require('posix');
 var ip = "127.0.0.1"
 
@@ -137,7 +137,7 @@ var device_test = function(device_id){
 }
 posix.setrlimit('nofile', {'soft': 10000, 'hard': 10000});
 
-for(var i = 91; i < 92; i++)
+for(var i = 31; i < 32; i++)
 {
     device_test(util.createDeviceId(i));
 }

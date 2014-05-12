@@ -45,10 +45,18 @@ exports.set_user_auth_id = function(user, keep_time){
     return data;
 }
 
+exports.set_auth_id_by_user = function(user, auth_id){
+    redis_db.set("__auth_id_" + user, auth_id);
+}
+
+exports.get_old_auth_id = function(user, cb){
+    redis_db.get("__auth_id_" + user, cb);
+}
+
 exports.get_user_auth_id = function(auth_id, cb){
     redis_db.get(auth_id, cb);
 }
 
-exports.del_user_auth_id = function(user){
-    redis_db.del("auth_code_" + user);
+exports.del_user_auth_id = function(auth_id){
+    redis_db.del(auth_id);
 }
