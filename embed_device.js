@@ -318,8 +318,7 @@ exports.create_embed_device = function(c, one_step_cb) {
             var msg = {"packet_id": ++packet_id, "type": type, "cb": cb, "ctx": ctx, "is_handled": false};
             pending_cbs.push(msg);
 
-            // default is 5 second
-            var timeout_mseconds = 5000;
+            var timeout_mseconds = 10000;
             if(type == 0xa5){
                 var cmd = payload.readUInt16BE(util.REQ_HEADER_SIZE + 16);
                 // learn cmd
@@ -604,10 +603,11 @@ var build_buff_for_msg = function(device_id, message){
             ret = phone_client.build_control_learn(device_id);
         }
         else if(cmd = 'send_ir'){
-            ret = phone_client.build_control_ir(device_id, message['ir_signal']);
+            ret = phone_client.build_control_ir(device_id, util.bufferStringToBuffer(message['ir_signal']));
         }
 
         ret[0] = 0xa5;
+        return ret;
     }
 }
 
@@ -630,7 +630,6 @@ sub.on('message', function(channel, message){
     }
 
     var after_general_control = function(resp_data, msg_id){
-        console.log(resp_data);
         var r1 = {};
         r1['__msg_id'] = msg_id;
         r1['result'] = 'ok';
@@ -639,7 +638,8 @@ sub.on('message', function(channel, message){
     }
 
     if(message['__type'] == 'query' || message['__type'] == 'control'){
-        var buff = build_buff_for_msg(device_id, message);
+        var target_device_id = util.bufferStringToBuffer(message['target_device_id'])
+        var buff = build_buff_for_msg(target_device_id, message);
         device.general_control(buff[0], buff, after_general_control, message['__msg_id']);
     }
     else if(message['__type'] == 'end'){

@@ -78,11 +78,11 @@ var device_test = function(device_id){
             device_client.write(util.buildGeneralOk(orig_msg));
         }
         else if(ctl_cmd == 0x10){
-            var buff = new Buffer(util.RESP_HEADER_SIZE + 4 + 4 + 20);
+            var buff = new Buffer(util.RESP_HEADER_SIZE + 1 + 20);
             buff.fill(0);
-            buff.writeUInt32BE(20, util.RESP_HEADER_SIZE + 4);
+            buff[util.RESP_HEADER_SIZE] = 0x10;
             var ir = new Buffer("1234567890abcdefghij");
-            ir.copy(buff, util.RESP_HEADER_SIZE + 8);
+            ir.copy(buff, util.RESP_HEADER_SIZE + 1);
             util.setRespCommonPart(buff, orig_msg, true);
             device_client.write(buff);
         }

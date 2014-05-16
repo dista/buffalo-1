@@ -17,7 +17,7 @@ exports.build_control_learn = function(device_id){
     index += 2;
     buff.writeUInt32BE(0, index);
 
-    return;
+    return buff;
 }
 
 exports.build_control_lock = function(device_id, is_lock){

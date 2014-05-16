@@ -10,11 +10,14 @@ var embed_device = require('./embed_device.js');
 var redis = require('redis');
 var msg_reason = require('./msg_reason.js');
 var fs = require('fs');
+var morgan = require('morgan');
+var tmp_cleanuper = require('./tmp_cleanuper.js');
 
 var sub = redis.createClient();
 var pubs = [redis.createClient()];
 
 var buffalo = express();
+buffalo.use(morgan());
 buffalo.use(bodyParser());
 buffalo.use("/buffalo/files", express.static(__dirname + '/files'));
 
@@ -106,7 +109,7 @@ var get_color_part = function(){
 
 var gen_auth_pic = function(cb){
     var text = get_auth_code();
-    var file_path = "files/" + text + ".png";
+    var file_path = "files/" + util.getRandomKey("gen_auth_pic_" + text) + ".png";
     var gx = gm(100, 50, '#ffffff').fontSize(30).fill('#000000').drawText(10, 40, text.substring(0, 2));
     gx.fontSize(40).fill('#b97a57').drawText(50, 35, text.substring(2, 4));
     
@@ -192,7 +195,7 @@ buffalo.post("/buffalo/login/user", function(req, res){
                     } 
 
                     var get_auth_code_cb = function(err, reply){
-                        if(reply != auth_token){
+                        if(!reply || (reply.toLowerCase() != auth_token.toLowerCase())){
                             res.type("application/json").json(200, {"result": "error", "auth_token": "auth_token不正确"});
                         }
                         else{
@@ -311,7 +314,12 @@ var send_msg = function(device_id, mco, cb){
         }
     }
 
-    timeout_cache[msg_id] = setTimeout(send_msg_cb, 5000, mco);
+    var timeout = 10000;
+    if(mco['__type'] == 'control' && mco['cmd'] == 'learn_signal'){
+        timeout = 120000;
+    }
+
+    timeout_cache[msg_id] = setTimeout(send_msg_cb, timeout, mco);
     var pub = get_pub_by_device_id(device_id);
     pub.publish('buffalo_device', JSON.stringify(mco));
 }
@@ -319,6 +327,7 @@ var send_msg = function(device_id, mco, cb){
 buffalo.post('/buffalo/status/device', function(req, res){
     var auth_id = req.body["auth_id"] || "";
     var device_id = req.body['device_id'] || "";
+    var target_device_id = device_id;
 
     var get_user_auth_id_cb = function(err, reply){
         if(!reply){
@@ -331,6 +340,7 @@ buffalo.post('/buffalo/status/device', function(req, res){
             var do_status = function(device_id){
                 var status_msg = {"device_id": util.buffToBufferStr(device_id)};
                 status_msg['__type'] = 'query';
+                status_msg['target_device_id'] = target_device_id;
 
                 var after_status_resp = function(has_error, ret_v){
                     if(has_error){
@@ -343,7 +353,6 @@ buffalo.post('/buffalo/status/device', function(req, res){
                             res.type("application/json").json(200, {"result": "error", "general_error": msg_reason.trans(ret_v['reason'])});
                         }
                         else{
-                            console.log(ret_v['resp_data']);
                             var resp_data = util.bufferStringToBuffer(ret_v['resp_data']);
                             var is_success = resp_data[5];
                             if(!is_success){
@@ -351,11 +360,8 @@ buffalo.post('/buffalo/status/device', function(req, res){
                                 return;
                             }
 
-                            console.log("Parsing status");
                             var stats = util.parseStatus(resp_data, 0, 10, 
                                     resp_data.length);
-
-                            console.log(stats);
 
                             res.type("application/json").json(200, {"result": "ok", "temperature": stats["Temp"], "is_online": 1});
                         }
@@ -608,6 +614,7 @@ buffalo.post('/buffalo/de_asso/device', function(req, res){
 buffalo.post("/buffalo/control/device", function(req, res){
     var auth_id = req.body['auth_id'] || "";
     var device_id = req.body['device_id'] || "";
+    var target_device_id = device_id;
     var cmd = req.body["cmd"] || "";
     var ir_signal = null;
 
@@ -624,6 +631,7 @@ buffalo.post("/buffalo/control/device", function(req, res){
             var control_msg = {"device_id": util.buffToBufferStr(device_id)};
             control_msg['__type'] = 'control';
             control_msg['cmd'] = cmd;
+            control_msg['target_device_id'] = target_device_id;
 
             var after_pre_process = function(){
                 if(cmd == 'lock'){
@@ -637,7 +645,7 @@ buffalo.post("/buffalo/control/device", function(req, res){
                         control_msg['ir_signal'] = req.body['ir_signal'];
                     }
                 }
-                else if(cmd = 'multi_cmd'){
+                else if(cmd == 'multi_cmd'){
                     control_msg['multi_cmd'] = req.body['multi_cmd'];
                 }
 
@@ -653,6 +661,7 @@ buffalo.post("/buffalo/control/device", function(req, res){
                         }
                         else{
                             var resp_data = util.bufferStringToBuffer(ret_v['resp_data']);
+                            console.log(resp_data);
                             var is_success = resp_data[5];
                             if(!is_success){
                                 res.type("application/json").json(200, {"result": "error", "general_error": "控制错误"});
@@ -666,7 +675,8 @@ buffalo.post("/buffalo/control/device", function(req, res){
                             else if(cmd == 'learn_signal'){
                                 var ir_len = resp_data.readUInt32BE(6) - 1;
                                 var ir = new Buffer(ir_len);
-                                resp.copy(ir, 0, 11, ir.length);
+                                resp_data.copy(ir, 0, 11, resp_data.length);
+                                console.log(ir);
 
                                 var on_get_ir = function(err, row){
                                     if(err){
@@ -702,6 +712,7 @@ buffalo.post("/buffalo/control/device", function(req, res){
             }
 
             if(cmd == 'send_ir'){
+                var is_ir_id = req.body['is_ir_id']
                 if(is_ir_id){
                    var ir_id = req.body["ir_id"] || "";
                    var get_ir_by_id_cb = function(err, row){
@@ -750,7 +761,7 @@ buffalo.post("/buffalo/control/device", function(req, res){
                     return;
                 }
 
-                db.get_device_by_id(row.master_id, get_master_device_cb);
+                mysqldb.get_device_by_id(row.master_id, get_master_device_cb);
             }
             mysqldb.get_device_by_device_id(device_id, get_device_by_device_id_cb);
         }
@@ -813,3 +824,4 @@ buffalo.post('/buffalo/download/setting', function(req, res){
 });
 
 buffalo.listen(4000);
+tmp_cleanuper.startCleanupTmpFiles();
