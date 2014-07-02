@@ -205,7 +205,7 @@ buffalo.post("/buffalo/login/user", function(req, res){
 
                     if(failed_time > 2){
                         if(auth_token == undefined){
-                            res.type("application/json").json(200, {"result": "ok", "general_error": "需要auth_token"});
+                            res.type("application/json").json(200, {"result": "error", "general_error": "需要auth_token"});
                         }
                         else{
                             redis_db.get_auth_code(auth_pic_id, get_auth_code_cb);
