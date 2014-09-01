@@ -152,6 +152,62 @@ buffalo.get("/buffalo/gen/auth_pic", function(req, res){
     gen_auth_pic(after_gen_auth_pic);
 });
 
+buffalo.post("/buffalo/change/password", function(req, res){
+    var user = req.body['user'] || "";
+    var old_password = req.body['old_password'] || "";
+    var new_password = req.body['new_password'] || "";
+
+    var is_email = false; 
+    if(user.indexOf("@") != -1){
+        is_email = true;
+    }
+
+    var get_by_name_or_email_cb = function(err, row){
+        if(err){
+            res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+        }
+        else{
+            if(!row){
+                res.type("application/json").json(200, {"result": "error", "user": "用户不存在"});
+            }
+            else{
+                var user = row;
+
+                var set_password_cb = function(err){
+                    if(err){
+                        res.type("application/json").json(500, {"result": "error", "general_error": "db"});
+                        return;
+                    }
+
+                    res.type("application/json").json(200, {"result": "ok"});
+                }
+
+                var verify_password = function(){
+                    if(row.password != mysqldb.get_hashed_password(old_password)){
+                        res.type("application/json").json(200, {"result": "error", "old_password": "密码错误"});
+                    }
+                    else{
+                        if(new_password.length < 6){
+                            res.type("application/json").json(200, {"result": "error", "new_password": "密码长度不能小于6"});
+                        }
+                        else if(!password_reg.test(new_password)){
+                            res.type("application/json").json(200, {"result": "error", "new_password": "密码必须使用A-Z, a-z, 0-9或_"});
+                        }
+                        else{
+                            mysqldb.set_password(user.id,
+                                    new_password, set_password_cb);
+                        }
+                    }
+                }
+
+                verify_password();
+            }
+        }
+    }
+
+    mysqldb.get_by_name_or_email(user, is_email, get_by_name_or_email_cb);
+});
+
 buffalo.post("/buffalo/login/user", function(req, res){
     var user = req.body['user'] || "";
     var password = req.body['password'] || "";
@@ -786,13 +842,18 @@ buffalo.post('/buffalo/upload/setting', function(req, res){
 
         var user = reply;
 
+        if(!user){
+            res.type("application/json").json(500, {"result": "error", "auth_id": "auth_id is wrong"});
+            return;
+        }
+
         fs.writeFile(__dirname + "/user_data/" + user + "_setting.json", data, function(err){
             if(err){
                 res.type("application/json").json(500, {"result": "error", "general_error": "fs"});
                 return;
             }
 
-            res.type("application/json").json(500, {"result": "ok"});
+            res.type("application/json").json(200, {"result": "ok"});
         });
     }
 
@@ -810,13 +871,18 @@ buffalo.post('/buffalo/download/setting', function(req, res){
 
         var user = reply;
 
+        if(!user){
+            res.type("application/json").json(500, {"result": "error", "auth_id": "auth_id is wrong"});
+            return;
+        }
+
         fs.readFile(__dirname + "/user_data/" + user + "_setting.json", function(err, data){
             if(err){
                 res.type("application/json").json(500, {"result": "error", "general_error": "fs"});
                 return;
             }
 
-            res.type("application/json").json(500, {"result": "ok", "setting": JSON.parse(data)});
+            res.type("application/json").json(200, {"result": "ok", "setting": JSON.parse(data)});
         });
     }
 
