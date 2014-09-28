@@ -1,0 +1,36 @@
+#! /bin/sh
+
+### BEGIN INIT INFO
+# Provides:          scriptname
+# Required-Start:    $redis $mysql
+# Required-Stop:     $redis $mysql
+# Default-Start:     
+# Default-Stop:      
+# Short-Description: buffalo
+# Description:       buffalo
+### END INIT INFO
+
+set -e
+
+. /lib/lsb/init-functions
+
+case "$1" in
+    start)
+        start-stop-daemon --start --background --make-pidfile --pidfile /var/run/buffalo.pid --startas /bin/sh -- -c "exec /usr/local/bin/node /root/buffalo/buffalo.js 1>/var/log/buffalo.log 2>&1"
+        start-stop-daemon --start --background --make-pidfile --pidfile /var/run/buffalo-1.pid --startas /bin/sh -- -c "exec /usr/local/bin/node /root/buffalo-1/buffalo.js 1>/var/log/buffalo-1.log 2>&1"
+        ;;
+    stop)
+        start-stop-daemon --stop --quiet --pidfile /var/run/buffalo.pid --exec /usr/local/bin/node || true
+        start-stop-daemon --stop --quiet --pidfile /var/run/buffalo-1.pid --exec /usr/local/bin/node || true
+        ;;
+    status)
+        status_of_proc -p /var/run/buffalo.pid "/usr/local/bin/node" buffalo || true
+        status_of_proc -p /var/run/buffalo-1.pid "/usr/local/bin/node" buffalo-1 || true
+        ;;
+    *)
+		echo "Usage: buffalo {start|stop|status}" >&2
+		exit 1
+        ;;
+esac
+
+exit 0
