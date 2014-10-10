@@ -381,6 +381,7 @@ var send_msg = function(device_id, mco, cb){
 }
 
 buffalo.post('/buffalo/status/device', function(req, res){
+    console.log(req.body);
     var auth_id = req.body["auth_id"] || "";
     var device_id = req.body['device_id'] || "";
     var target_device_id = device_id;
@@ -410,6 +411,7 @@ buffalo.post('/buffalo/status/device', function(req, res){
                         }
                         else{
                             var resp_data = util.bufferStringToBuffer(ret_v['resp_data']);
+                            console.log(resp_data);
                             var is_success = resp_data[5];
                             if(!is_success){
                                 res.type("application/json").json(200, {"result": "error", "general_error": "获取出错"});
@@ -418,6 +420,8 @@ buffalo.post('/buffalo/status/device', function(req, res){
 
                             var stats = util.parseStatus(resp_data, 0, 10, 
                                     resp_data.length);
+
+                            console.log('status OK');
 
                             res.type("application/json").json(200, {"result": "ok", "temperature": stats["Temp"], "is_online": 1});
                         }
@@ -729,9 +733,9 @@ buffalo.post("/buffalo/control/device", function(req, res){
                                 res.type("application/json").json(200, {"result": "ok"});
                             }
                             else if(cmd == 'learn_signal'){
-                                var ir_len = resp_data.readUInt32BE(6) - 1;
+                                var ir_len = resp_data.readUInt32BE(6) - 8;
                                 var ir = new Buffer(ir_len);
-                                resp_data.copy(ir, 0, 11, resp_data.length);
+                                resp_data.copy(ir, 0, 18, resp_data.length);
                                 console.log(ir);
 
                                 var on_get_ir = function(err, row){
