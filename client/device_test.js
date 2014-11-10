@@ -3,7 +3,7 @@ var util = require("../util.js");
 var error_code = require("../error_code.js");
 var port = 8000;
 var posix = require('posix');
-var ip = "127.0.0.1"
+var ip = "103.21.136.175"
 
 var device_test = function(device_id){
     var device_client = net.connect(port, ip, function(){
@@ -19,7 +19,7 @@ var device_test = function(device_id){
         device_client.on('data', function(data){
             console.log(data);
             if(data[0] == 0xa0){
-                send_heartbeat();
+                //send_heartbeat();
             }
             else if(data[0] == 0xa1){
                 send_sync_time();
@@ -137,7 +137,7 @@ var device_test = function(device_id){
 }
 posix.setrlimit('nofile', {'soft': 10000, 'hard': 10000});
 
-for(var i = 31; i < 32; i++)
+for(var i = 1019; i < 1020; i++)
 {
     device_test(util.createDeviceId(i));
 }

@@ -29,8 +29,9 @@ function connect_with_reconnect_enable(){
 
         /*
         db.query('use ' + dbname, function(){
-            for(var i = 0; i <= 500; i++){
+            for(var i = 1000; i <= 1020; i++){
                 db.query('INSERT INTO device (device_id) VALUES (?)', [util.createDeviceId(i)]);
+                console.log(util.createDeviceId(i)); 
                 console.log(i);
             }
         });
@@ -125,6 +126,10 @@ var query_wrapper = function(sql, binds, cb){
         })
     }
 }
+
+query_wrapper("select * from device order by id desc limit 10", function(err, res){
+    console.log(new Buffer(res[0]["device_id"]));
+});
 
 exports.register_user = function(name, email, password, cb)
 {

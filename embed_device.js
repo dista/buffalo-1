@@ -355,6 +355,9 @@ exports.create_embed_device = function(c, one_step_cb) {
         }
 
         var handle_data_internal = function(data, start){
+            console.log('----------------------');
+            console.log(data);
+            console.log(start);
             if(start >= data.length)
             {
                 return;

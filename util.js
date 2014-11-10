@@ -358,13 +358,13 @@ exports.createDeviceId = function(n){
     }
 
     var n = formatNumber(n); 
-    var nBuffer = new Buffer(n);
+    var nBuffer = bufferStringToBuffer(n);
     nBuffer.copy(deviceId, 16 - nBuffer.length);
 
     return deviceId;
 }
 
-exports.bufferStringToBuffer = function(str){
+bufferStringToBuffer = function(str){
     var code0 = "0".charCodeAt(0);
     var charA = 'a'.charCodeAt(0);
     var buff = new Buffer(str.length / 2);
@@ -388,6 +388,8 @@ exports.bufferStringToBuffer = function(str){
 
     return buff;
 }
+
+exports.bufferStringToBuffer = bufferStringToBuffer;
 
 exports.buffToBufferStr = function(buff){
     var ret = "";

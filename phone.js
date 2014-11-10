@@ -25,7 +25,7 @@ exports.create_phone = function(c, one_step_cb) {
                 name = self.user.email;
             }
 
-            console.log("worker[%s]; phone[%s]; ip[%s:%s]: %s", cluster.worker.id, name, self.remoteAddress, self.remotePort, msg); 
+            console.log("phone[%s]; ip[%s:%s]: %s", name, self.remoteAddress, self.remotePort, msg); 
         }
 
         var write_data = function(buff){

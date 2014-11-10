@@ -109,7 +109,8 @@ var get_color_part = function(){
 
 var gen_auth_pic = function(cb){
     var text = get_auth_code();
-    var file_path = "files/" + util.getRandomKey("gen_auth_pic_" + text) + ".png";
+    var filename = util.getRandomKey("gen_auth_pic_" + text) + ".png";
+    var file_path = __dirname + "/files/" + filename;
     var gx = gm(100, 50, '#ffffff').fontSize(30).fill('#000000').drawText(10, 40, text.substring(0, 2));
     gx.fontSize(40).fill('#b97a57').drawText(50, 35, text.substring(2, 4));
     
@@ -129,7 +130,7 @@ var gen_auth_pic = function(cb){
         if(err){
             console.log(err);
         }
-        cb(err, text, file_path);
+        cb(err, text, "files/" + filename);
     }); 
 }
 
@@ -677,6 +678,8 @@ buffalo.post("/buffalo/control/device", function(req, res){
     var target_device_id = device_id;
     var cmd = req.body["cmd"] || "";
     var ir_signal = null;
+
+    console.log(req.body);
 
     var get_user_auth_id_cb = function(err, reply){
         if(!reply){
